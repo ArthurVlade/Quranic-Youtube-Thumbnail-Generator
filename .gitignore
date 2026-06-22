@@ -1,0 +1,7 @@
+__pycache__/
+*.py[cod]
+*.png
+!assets/**
+.venv/
+data/reciter_images/
+data/reciters.json
