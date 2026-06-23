@@ -29,6 +29,7 @@ a = Analysis(
         "fitz",
         "first_run_assets",
         "image_quality",
+        "name_containers",
         "app_paths",
         "settings_store",
         "reciter_store",
@@ -67,6 +68,7 @@ exe = EXE(
     codesign_identity=None,
     entitlements_file=None,
     icon=str(PROJECT / "assets" / "icon.ico"),
+    version=str(PROJECT / "version_info.txt"),
 )
 
 coll = COLLECT(

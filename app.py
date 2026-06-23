@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import sys
 import tkinter as tk
 import shutil
 from dataclasses import replace
@@ -24,6 +25,7 @@ from thumbnail_generator import (
     list_nature_backgrounds,
     save_thumbnail,
 )
+from name_containers import list_name_containers
 from ui_theme import (
     ACCENT,
     BG_DARK,
@@ -350,7 +352,7 @@ class ThumbnailApp(tk.Tk):
     def __init__(self) -> None:
         super().__init__()
         self.title(APP_TITLE)
-        self.geometry("1280x820")
+        self.geometry("1280x820+80+40")
         self.minsize(1120, 720)
         apply_theme(self)
         self._set_window_icon()
@@ -360,16 +362,15 @@ class ThumbnailApp(tk.Tk):
         self._syncing_surah = False
         self._preview_job: str | None = None
 
-        # Custom (borderless) title bar — gracefully falls back to native chrome.
+        # Custom title bar — strip native caption via Win32 (keeps taskbar icon).
         # Set "native_titlebar": true in data/settings.json to force native chrome.
-        self._custom_chrome = False
+        self._custom_chrome = not self._saved_settings.get("native_titlebar", False)
         self._maximized = False
         self._normal_geometry = "1280x820+80+40"
-        if not self._saved_settings.get("native_titlebar", False):
+        if self._custom_chrome:
+            # Hide briefly so the native title bar never flashes during setup.
             try:
-                self.overrideredirect(True)
-                self._custom_chrome = True
-                self.after(10, lambda: win_chrome.enable_taskbar_icon(self))
+                self.withdraw()
             except tk.TclError:
                 self._custom_chrome = False
 
@@ -382,6 +383,11 @@ class ThumbnailApp(tk.Tk):
         self.text_glow_var = tk.BooleanVar(value=True)
         self.show_reciter_overlay_var = tk.BooleanVar(value=False)
         self.custom_banner_path: Path | None = None
+        self.name_container_var = tk.StringVar(value="None")
+        self.name_container_width_var = tk.DoubleVar(value=1.0)
+        self.name_container_height_var = tk.DoubleVar(value=1.0)
+        self.name_container_opacity_var = tk.DoubleVar(value=0.88)
+        self.custom_name_container_path: Path | None = None
 
         self.reciter_collection_var = tk.StringVar()
         self.reciter_display_var = tk.StringVar()
@@ -411,10 +417,12 @@ class ThumbnailApp(tk.Tk):
         self._refresh_reciter_options()
         self._refresh_nature_backgrounds()
         self._refresh_banners()
+        self._refresh_name_containers()
         self._restore_settings()
         self._bind_shortcuts()
         self.protocol("WM_DELETE_WINDOW", self._on_close)
         self._ui_ready = True
+        self._finalize_custom_shell()
         self.after(100, self.update_preview)
 
     def _set_window_icon(self) -> None:
@@ -426,13 +434,26 @@ class ThumbnailApp(tk.Tk):
                 self.iconbitmap(default=str(ico_path))
             except tk.TclError:
                 pass
-        # iconphoto drives the taskbar icon reliably across Windows versions
         if png_path.exists():
             try:
                 self._icon_image = tk.PhotoImage(file=str(png_path))
                 self.iconphoto(True, self._icon_image)
             except tk.TclError:
                 pass
+
+    def _finalize_custom_shell(self) -> None:
+        """Apply borderless Win32 shell and show the window."""
+        if not self._custom_chrome:
+            return
+        self.update_idletasks()
+        win_chrome.apply_borderless_shell(self)
+        win_chrome.register_taskbar_hooks(self)
+        try:
+            self.deiconify()
+        except tk.TclError:
+            pass
+        self.geometry(self._normal_geometry)
+        self.after(250, win_chrome.apply_borderless_shell)
 
     # ── custom title bar ─────────────────────────────────────────────────────
 
@@ -455,10 +476,13 @@ class ThumbnailApp(tk.Tk):
                          font=(FONT_HEADING, 10))
         title.pack(side="left", pady=8)
 
-        # Window control buttons (right side)
-        self._tb_button(bar, "\u2715", self._on_close, hover=CLOSE_HOVER, hover_fg="#ffffff")
-        self._tb_button(bar, "\u25A1", self._toggle_maximize, hover=CTRL_HOVER)
-        self._tb_button(bar, "\u2014", self._minimize, hover=CTRL_HOVER)
+        # Window control buttons (right side, inset when maximized on Win11)
+        self._tb_controls = tk.Frame(bar, bg=TITLEBAR_BG)
+        self._tb_controls.pack(side="right", fill="y")
+        self._tb_close = self._tb_button(self._tb_controls, "\u2715", self._on_close, hover=CLOSE_HOVER, hover_fg="#ffffff")
+        self._tb_max = self._tb_button(self._tb_controls, "\u25A1", self._toggle_maximize, hover=CTRL_HOVER)
+        self._tb_min = self._tb_button(self._tb_controls, "\u2014", self._minimize, hover=CTRL_HOVER)
+        self._sync_titlebar_insets()
 
         # Dragging
         for widget in (bar, title):
@@ -483,6 +507,26 @@ class ThumbnailApp(tk.Tk):
         btn.bind("<ButtonRelease-1>", lambda _e: command())
         return btn
 
+    def _sync_titlebar_insets(self) -> None:
+        if not getattr(self, "_tb_controls", None):
+            return
+        inset = win_chrome.titlebar_control_inset(self._maximized)
+        self._tb_controls.pack_configure(padx=(0, inset, 0, 0))
+        if getattr(self, "_tb_max", None):
+            self._tb_max.configure(text="\u2750" if self._maximized else "\u25A1")
+
+    def _after_window_state_change(self) -> None:
+        if self._custom_chrome:
+            win_chrome.apply_borderless_shell(self)
+            self._sync_titlebar_insets()
+        self.update_idletasks()
+        frame = getattr(self, "_preview_frame", None)
+        if frame is not None and frame.winfo_width() > 80:
+            class _Ev:
+                width = frame.winfo_width()
+                height = frame.winfo_height()
+            self._on_preview_frame_resize(_Ev())
+
     def _tb_press(self, event) -> None:
         if self._maximized:
             return
@@ -503,17 +547,15 @@ class ThumbnailApp(tk.Tk):
         if not self._custom_chrome:
             return
         if self._maximized:
-            self.geometry(self._normal_geometry)
+            win_chrome.restore_window(self)
             self._maximized = False
+            if self._normal_geometry:
+                self.after(10, lambda: self.geometry(self._normal_geometry))
         else:
             self._normal_geometry = self.geometry()
-            area = win_chrome.get_work_area()
-            if area:
-                left, top, right, bottom = area
-                self.geometry(f"{right - left}x{bottom - top}+{left}+{top}")
-            else:
-                self.geometry(f"{self.winfo_screenwidth()}x{self.winfo_screenheight() - 48}+0+0")
+            win_chrome.maximize_window(self)
             self._maximized = True
+        self.after(30, self._after_window_state_change)
 
     def _bind_shortcuts(self) -> None:
         self.bind_all("<Control-s>", lambda _e: self.export_thumbnail())
@@ -527,6 +569,10 @@ class ThumbnailApp(tk.Tk):
     def _settings_snapshot(self) -> dict:
         return {
             "banner": self.banner_var.get(),
+            "name_container": self.name_container_var.get(),
+            "name_container_width_scale": float(self.name_container_width_var.get()),
+            "name_container_height_scale": float(self.name_container_height_var.get()),
+            "name_container_opacity": float(self.name_container_opacity_var.get()),
             "text_glow": bool(self.text_glow_var.get()),
             "background_mode": self.background_mode.get(),
             "nature_background": self.nature_background_var.get(),
@@ -578,6 +624,35 @@ class ThumbnailApp(tk.Tk):
                 self.banner_var.set(banner)
                 self._on_banner_selected()
                 self._build_banner_grid()
+            container = s.get("name_container")
+            if container and container in [lbl for _, lbl, _ in getattr(self, "_container_data", [])]:
+                self.name_container_var.set(container)
+                self._on_name_container_selected()
+                self._build_container_grid()
+            width = s.get("name_container_width_scale")
+            height = s.get("name_container_height_scale")
+            opacity = s.get("name_container_opacity")
+            legacy = s.get("name_container_scale")
+            if width is not None:
+                self.name_container_width_var.set(float(width))
+            elif legacy is not None:
+                self.name_container_width_var.set(float(legacy))
+            if height is not None:
+                self.name_container_height_var.set(float(height))
+            elif legacy is not None:
+                self.name_container_height_var.set(float(legacy))
+            if opacity is not None:
+                self.name_container_opacity_var.set(float(opacity))
+            if hasattr(self, "_container_height_pct") and height is not None:
+                self._container_height_pct.set(int(float(height) * 100))
+            elif hasattr(self, "_container_height_pct") and legacy is not None:
+                self._container_height_pct.set(int(float(legacy) * 100))
+            if hasattr(self, "_container_width_pct") and width is not None:
+                self._container_width_pct.set(int(float(width) * 100))
+            elif hasattr(self, "_container_width_pct") and legacy is not None:
+                self._container_width_pct.set(int(float(legacy) * 100))
+            if hasattr(self, "_container_opacity_pct") and opacity is not None:
+                self._container_opacity_pct.set(int(float(opacity) * 100))
             mode = s.get("background_mode")
             if mode in {"nature", "reciter", "custom"}:
                 self.background_mode.set(mode)
@@ -674,7 +749,12 @@ class ThumbnailApp(tk.Tk):
         preview_frame.grid(row=0, column=1, sticky="nsew")
         preview_frame.rowconfigure(0, weight=1)
         preview_frame.columnconfigure(0, weight=1)
-        self.preview_canvas = InteractivePreviewCanvas(preview_frame, on_layout_change=self._on_canvas_layout_change)
+        self._preview_frame = preview_frame
+        self.preview_canvas = InteractivePreviewCanvas(
+            preview_frame,
+            on_layout_change=self._on_canvas_layout_change,
+            on_container_resize=self._on_container_resize,
+        )
         self.preview_canvas.grid(row=0, column=0)
         preview_frame.bind("<Configure>", self._on_preview_frame_resize)
 
@@ -769,6 +849,81 @@ class ThumbnailApp(tk.Tk):
         self._size_row(parent, "English title (pt)", self.title_size_var, 20, 90, 2)
         self._size_row(parent, "Reciter name (pt)", self.reciter_size_var, 16, 70, 2)
         self._size_row(parent, "Badge number (pt)", self.badge_size_var, 14, 52, 2)
+
+        ttk.Separator(parent, orient="horizontal").pack(fill="x", pady=(12, 8))
+        ttk.Label(parent, text="Surah name container", style="Panel.Heading.TLabel").pack(anchor="w", pady=(0, 4))
+        ttk.Label(
+            parent,
+            text="Ornate frame around the Arabic surah name only. English title, reciter, and badge stay below.",
+            style="Panel.Muted.TLabel",
+            wraplength=360,
+        ).pack(anchor="w", pady=(0, 6))
+
+        self._container_grid_frame = ttk.Frame(parent, style="Panel.TFrame")
+        self._container_grid_frame.pack(fill="x")
+        self._container_thumb_refs: list[ImageTk.PhotoImage] = []
+
+        container_scale_row = ttk.Frame(parent, style="Panel.TFrame")
+        container_scale_row.pack(fill="x", pady=(6, 0))
+        ttk.Label(container_scale_row, text="Container opacity", style="Panel.TLabel", width=20).pack(side="left")
+        self._container_opacity_pct = tk.IntVar(value=88)
+
+        def _container_opacity_update(*_):
+            self.name_container_opacity_var.set(self._container_opacity_pct.get() / 100)
+            self.schedule_preview()
+
+        self._container_opacity_pct.trace_add("write", _container_opacity_update)
+        ttk.Scale(
+            container_scale_row, from_=30, to=100, variable=self._container_opacity_pct,
+            orient="horizontal",
+            command=lambda _v: self.schedule_preview(),
+        ).pack(side="left", fill="x", expand=True, padx=(6, 6))
+        ttk.Label(container_scale_row, textvariable=self._container_opacity_pct, style="Panel.TLabel", width=4).pack(side="right")
+
+        container_height_row = ttk.Frame(parent, style="Panel.TFrame")
+        container_height_row.pack(fill="x", pady=(6, 0))
+        ttk.Label(container_height_row, text="Container height", style="Panel.TLabel", width=20).pack(side="left")
+        self._container_height_pct = tk.IntVar(value=100)
+
+        def _container_height_update(*_):
+            self.name_container_height_var.set(self._container_height_pct.get() / 100)
+            self.schedule_preview()
+
+        self._container_height_pct.trace_add("write", _container_height_update)
+        ttk.Scale(
+            container_height_row, from_=70, to=160, variable=self._container_height_pct,
+            orient="horizontal",
+            command=lambda _v: self.schedule_preview(),
+        ).pack(side="left", fill="x", expand=True, padx=(6, 6))
+        ttk.Label(container_height_row, textvariable=self._container_height_pct, style="Panel.TLabel", width=4).pack(side="right")
+
+        container_width_row = ttk.Frame(parent, style="Panel.TFrame")
+        container_width_row.pack(fill="x", pady=(6, 0))
+        ttk.Label(container_width_row, text="Container width", style="Panel.TLabel", width=20).pack(side="left")
+        self._container_width_pct = tk.IntVar(value=100)
+
+        def _container_width_update(*_):
+            self.name_container_width_var.set(self._container_width_pct.get() / 100)
+            self.schedule_preview()
+
+        self._container_width_pct.trace_add("write", _container_width_update)
+        ttk.Scale(
+            container_width_row, from_=70, to=160, variable=self._container_width_pct,
+            orient="horizontal",
+            command=lambda _v: self.schedule_preview(),
+        ).pack(side="left", fill="x", expand=True, padx=(6, 6))
+        ttk.Label(container_width_row, textvariable=self._container_width_pct, style="Panel.TLabel", width=4).pack(side="right")
+
+        ttk.Label(
+            parent,
+            text="Hover the frame in preview: ↔ width, ↕ height, ⧉ uniform padding. Arabic SVG size is separate (Typography tab).",
+            style="Panel.Muted.TLabel",
+            wraplength=360,
+        ).pack(anchor="w", pady=(6, 0))
+
+        ttk.Button(parent, text="Upload custom container...", command=self._upload_custom_container).pack(
+            anchor="w", pady=(8, 0)
+        )
 
     def _banner_size_int_var(self) -> tk.IntVar:
         """Return an IntVar (percent 10-60) that stays in sync with banner_size_var (0.10-0.60)."""
@@ -1097,6 +1252,121 @@ class ThumbnailApp(tk.Tk):
         self._refresh_banners()
         label = f"Custom: {Path(path).stem.replace('_', ' ').title()}"
         self.banner_var.set(label)
+        self.update_preview()
+
+    def _refresh_name_containers(self) -> None:
+        containers = list_name_containers()
+        self._container_data = containers
+        self._container_lookup = {label: cid for cid, label, _path in containers}
+        if self.name_container_var.get() not in [lbl for _, lbl, _ in containers]:
+            self.name_container_var.set("None")
+        if hasattr(self, "_container_grid_frame"):
+            self._build_container_grid()
+            self._on_name_container_selected()
+
+    def _build_container_grid(self) -> None:
+        frame = self._container_grid_frame
+        for child in frame.winfo_children():
+            child.destroy()
+        self._container_thumb_refs.clear()
+
+        TW, TH = 128, 40
+        cols = 2
+        current = self.name_container_var.get()
+
+        for idx, (cid, label, path) in enumerate(self._container_data):
+            col = idx % cols
+            row = idx // cols
+            cell = ttk.Frame(frame, style="Panel.TFrame")
+            cell.grid(row=row, column=col, padx=4, pady=4, sticky="w")
+
+            try:
+                if path and path.exists():
+                    img = Image.open(path).convert("RGBA")
+                    bg = Image.new("RGB", (TW, TH), (30, 30, 35))
+                    img.thumbnail((TW - 4, TH - 4), Image.Resampling.LANCZOS)
+                    ox = (TW - img.width) // 2
+                    oy = (TH - img.height) // 2
+                    bg.paste(img, (ox, oy), img)
+                    photo = ImageTk.PhotoImage(bg)
+                else:
+                    none_img = Image.new("RGB", (TW, TH), (40, 40, 45))
+                    from PIL import ImageDraw as _ID
+                    d = _ID.Draw(none_img)
+                    d.line([(6, TH // 2), (TW - 6, TH // 2)], fill=(80, 80, 80), width=2)
+                    d.text((TW // 2 - 12, TH // 2 - 8), "None", fill=(120, 120, 120))
+                    photo = ImageTk.PhotoImage(none_img)
+            except Exception:
+                photo = None
+
+            selected = label == current
+            border = "#d4af37" if selected else "#333344"
+            btn_frame = tk.Frame(cell, bg=border, bd=0)
+            btn_frame.pack()
+            if photo:
+                self._container_thumb_refs.append(photo)
+                btn = tk.Label(btn_frame, image=photo, cursor="hand2", bd=0, bg=border, padx=2, pady=2)
+                btn.pack()
+            btn.bind("<Button-1>", lambda _e, lbl=label: self._select_name_container(lbl))
+            short = label if len(label) <= 22 else label[:21] + "…"
+            tk.Label(cell, text=short, font=("Segoe UI", 7), bg="#1a1d23",
+                     fg="#d4af37" if selected else "#888888", wraplength=TW + 20, justify="center").pack()
+
+    def _select_name_container(self, label: str) -> None:
+        self.name_container_var.set(label)
+        self._on_name_container_selected()
+        self._build_container_grid()
+
+    def _on_name_container_selected(self, _event=None) -> None:
+        label = self.name_container_var.get()
+        cid = getattr(self, "_container_lookup", {}).get(label, "none")
+        if cid.startswith("custom_"):
+            p = base_dir() / "assets" / "name_containers" / f"{cid}.png"
+            self.custom_name_container_path = p if p.exists() else None
+        else:
+            self.custom_name_container_path = None
+        self.update_preview()
+
+    def _on_container_resize(self, kind: str, delta: float) -> None:
+        lo, hi = 0.55, 1.8
+        if kind == "width":
+            cur = float(self.name_container_width_var.get())
+            self.name_container_width_var.set(max(lo, min(hi, cur + delta)))
+            if hasattr(self, "_container_width_pct"):
+                self._container_width_pct.set(int(self.name_container_width_var.get() * 100))
+        elif kind == "height":
+            cur = float(self.name_container_height_var.get())
+            self.name_container_height_var.set(max(lo, min(hi, cur + delta)))
+            if hasattr(self, "_container_height_pct"):
+                self._container_height_pct.set(int(self.name_container_height_var.get() * 100))
+        elif kind == "uniform":
+            w = max(lo, min(hi, float(self.name_container_width_var.get()) + delta))
+            h = max(lo, min(hi, float(self.name_container_height_var.get()) + delta))
+            self.name_container_width_var.set(w)
+            self.name_container_height_var.set(h)
+            if hasattr(self, "_container_width_pct"):
+                self._container_width_pct.set(int(w * 100))
+            if hasattr(self, "_container_height_pct"):
+                self._container_height_pct.set(int(h * 100))
+        self.schedule_preview(60)
+
+    def _name_container_id(self) -> str:
+        return getattr(self, "_container_lookup", {}).get(self.name_container_var.get(), "none")
+
+    def _upload_custom_container(self) -> None:
+        path = filedialog.askopenfilename(
+            title="Upload surah name container PNG",
+            filetypes=[("PNG images", "*.png"), ("All images", "*.jpg *.jpeg *.png *.webp"), ("All files", "*.*")],
+        )
+        if not path:
+            return
+        dest_dir = base_dir() / "assets" / "name_containers"
+        dest_dir.mkdir(parents=True, exist_ok=True)
+        dest = dest_dir / f"custom_{Path(path).stem}.png"
+        shutil.copy2(path, dest)
+        self.custom_name_container_path = dest
+        self._refresh_name_containers()
+        self.name_container_var.set(f"Custom: {Path(path).stem.replace('_', ' ').title()}")
         self.update_preview()
 
     def _quick_add_reciter_photo(self) -> None:
@@ -1449,6 +1719,11 @@ class ThumbnailApp(tk.Tk):
             badge_accent_color=self.badge_accent_color.rgb(),
             banner_id=self._banner_id(),
             banner_custom_path=self.custom_banner_path,
+            name_container_id=self._name_container_id(),
+            name_container_custom_path=self.custom_name_container_path,
+            name_container_width_scale=float(self.name_container_width_var.get()),
+            name_container_height_scale=float(self.name_container_height_var.get()),
+            name_container_opacity=float(self.name_container_opacity_var.get()),
             text_glow=self.text_glow_var.get(),
             text_offset_x=layout["text_offset_x"],
             text_offset_y=layout["text_offset_y"],
@@ -1540,6 +1815,8 @@ class ThumbnailApp(tk.Tk):
 
 def _set_app_user_model_id() -> None:
     """Tell Windows this is its own app so the taskbar uses our icon, not python's."""
+    if not sys.platform.startswith("win"):
+        return
     try:
         import ctypes
         ctypes.windll.shell32.SetCurrentProcessExplicitAppUserModelID(

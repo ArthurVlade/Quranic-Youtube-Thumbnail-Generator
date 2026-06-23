@@ -36,6 +36,12 @@ def main() -> None:
     else:
         print("Banners already present — skipping generation.")
 
+    containers_dir = ROOT / "assets" / "name_containers"
+    if not any(containers_dir.glob("*.png")):
+        _run("generate_name_containers.py")
+    else:
+        print("Name containers already present — skipping generation.")
+
     bg_dir = ROOT / "assets" / "backgrounds"
     bg_count = len(list(bg_dir.glob("*.jpg"))) if bg_dir.exists() else 0
     if bg_count < 100:

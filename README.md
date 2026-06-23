@@ -4,6 +4,12 @@ I built this tool to create cinematic, YouTube-style Quranic recitation thumbnai
 
 ![icon](assets/icon.png)
 
+### Sample output (Surah Al-Ma'idah)
+
+![Sample thumbnail — 005 Surah Al-Ma'idah](docs/samples/005_surah_al-maidah.png)
+
+*Export filename example: `005_Surah_Al-Ma'idah.png` at Full HD (2560×1440).*
+
 ---
 
 ## Install (Windows — easiest way)
@@ -68,8 +74,9 @@ If you only want a portable folder instead of a Setup.exe:
 1. Open the **Surah** tab → pick a surah (names and number auto-fill).
 2. Set your **reciter name** and tweak **Style** (sizes, colors, glow).
 3. Pick a **Background** (filter by Forests, Mountains, Lakes, etc.) or use **Random scenery** / **Fetch fresh (online)**.
-4. Drag the colored tabs on the preview to position each text layer, or drag the canvas to move the whole block.
-5. **Export** tab → choose HD / Full HD / 4K → **Export PNG** (`Ctrl+S`) or **Batch export** (`Ctrl+E`).
+4. On the **Style** tab, optionally pick a **Surah name container** — the ornate frame wraps the Arabic name only.
+5. Drag the colored tabs on the preview to position each text layer, or drag the canvas to move the whole block.
+6. **Export** tab → choose HD / Full HD / 4K → **Export PNG** (`Ctrl+S`) or **Batch export** (`Ctrl+E`).
 
 Corner banners are off by default. Enable them on the **Banners** tab if you want the Islamic corner ornaments.
 
@@ -78,6 +85,7 @@ Corner banners are off by default. Enable them on the **Banners** tab if you wan
 ## Features
 
 - **Stylized surah names** — high-resolution SVG (3× supersampled) for all 114 surahs from Amrayn
+- **Surah name containers** — 32 transparent outline frames; Arabic sits inside, everything else below
 - **HD / Full HD / 4K export** — crisp text and badges at 1280×720, 2560×1440, or 3840×2160
 - **Independent text layers** — move Arabic SVG, English title, reciter name, and badge separately
 - **500+ categorised nature backgrounds** — Forests, Mountains, Lakes, Springs, and more
@@ -177,6 +185,31 @@ That is normal for `run.bat`. The installed `.exe` uses the app icon.
 
 **Want the normal Windows title bar**  
 Add `"native_titlebar": true` to `data/settings.json`.
+
+---
+
+## Pushing changes to GitHub
+
+After you edit the project locally, commit and push from the repo folder in PowerShell:
+
+```powershell
+cd "C:\Users\Avalon Absolute\Projects\quran-thumbnail-generator"
+
+git status
+git add app.py win_chrome.py README.md docs/samples/
+git add -u
+git status
+
+git commit -m "Fix maximized title bar controls and update README sample output"
+
+git push origin main
+```
+
+Replace `main` with your branch name if different (`git branch` shows the current branch).
+
+If `git push` says *Everything up-to-date* but you expected new commits, run `git status` — you may still need `git add` and `git commit` first.
+
+Large generated folders such as `assets/backgrounds/` are gitignored. Sample thumbnails in `docs/samples/` are meant to be committed for the README.
 
 ---
 

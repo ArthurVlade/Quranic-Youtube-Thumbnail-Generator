@@ -59,6 +59,7 @@ echo Downloading fonts, backgrounds and generating banners/icon ...
 "%VPY%" generate_banners.py
 "%VPY%" setup_reciter_photos.py
 "%VPY%" make_icon.py
+"%VPY%" generate_name_containers.py
 
 echo.
 echo ==== Setup complete! ====

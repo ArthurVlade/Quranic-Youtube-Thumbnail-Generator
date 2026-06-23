@@ -10,6 +10,7 @@ from bidi.algorithm import get_display
 from PIL import Image, ImageDraw, ImageEnhance, ImageFont, ImageOps
 
 from surah_svg import render_surah_svg
+from name_containers import compose_name_block, fit_container, load_container
 
 
 THUMB_WIDTH = 1280
@@ -20,6 +21,7 @@ WHITE = (255, 255, 255)
 
 TOP_MARGIN_RATIO = 0.12
 GAP_ARABIC_TO_ENGLISH = 36
+GAP_CONTAINER_TO_TITLE = 32  # extra space when a name container wraps the SVG
 GAP_ENGLISH_TO_RECITER = 28
 GAP_RECITER_TO_BADGE = 40
 
@@ -61,6 +63,12 @@ class ThumbnailConfig:
     reciter_offset_y: int = 0
     badge_offset_x: int = 0
     badge_offset_y: int = 0
+    # Surah name decorative container (wraps Arabic only; title/reciter/badge stay below)
+    name_container_id: str = "none"
+    name_container_custom_path: Path | None = None
+    name_container_width_scale: float = 1.0
+    name_container_height_scale: float = 1.0
+    name_container_opacity: float = 0.88
     # Banner corner size (fraction of min(W, H))
     banner_corner_size: float = 0.40
 
@@ -424,6 +432,7 @@ def generate_thumbnail(
                            max_height=config.svg_max_height * s)
     arabic_text = "" if art else _reshape_arabic(config.arabic_surah)
     arabic_font = arabic_bbox = None
+    glyph_layer: Image.Image | None = art
     if art:
         svg_h, svg_w = art.height, art.width
     elif arabic_text:
@@ -431,8 +440,29 @@ def generate_thumbnail(
                                              max_text_width, 118 * s, 56 * s)
         svg_h = arabic_bbox[3] - arabic_bbox[1]
         svg_w = arabic_bbox[2] - arabic_bbox[0]
+        glyph_layer = Image.new("RGBA", (svg_w, svg_h), (0, 0, 0, 0))
+        gdraw = ImageDraw.Draw(glyph_layer)
+        _draw_cinematic_text(gdraw, (-arabic_bbox[0], -arabic_bbox[1]),
+                             arabic_text, arabic_font, config.arabic_color, config.text_glow, s)
     else:
         svg_h = svg_w = 0
+
+    # Optional ornate container wrapping the Arabic name only
+    name_block: Image.Image | None = None
+    block_w = svg_w
+    block_h = svg_h
+    container_tpl = load_container(config.name_container_id, config.name_container_custom_path)
+    if container_tpl and glyph_layer and svg_w and svg_h:
+        scaled, inner = fit_container(
+            container_tpl, svg_w, svg_h,
+            width_scale=config.name_container_width_scale,
+            height_scale=config.name_container_height_scale,
+        )
+        name_block = compose_name_block(
+            scaled, inner, glyph_layer,
+            frame_opacity=config.name_container_opacity,
+        )
+        block_w, block_h = name_block.size
 
     english = config.english_surah.strip().upper()
     title_font = title_h = None
@@ -451,26 +481,30 @@ def generate_thumbnail(
     show_badge = config.surah_number > 0
     badge_h = (config.badge_size * s + 28 * s) if show_badge else 0  # text + 2*pad_y
 
-    gap1 = GAP_ARABIC_TO_ENGLISH * s if (svg_h and english) else 0
-    gap2 = GAP_ENGLISH_TO_RECITER * s if ((svg_h or english) and reciter) else 0
-    gap3 = GAP_RECITER_TO_BADGE * s if ((svg_h or english or reciter) and show_badge) else 0
+    gap1 = 0
+    if block_h and english:
+        gap1 = (GAP_CONTAINER_TO_TITLE if name_block else GAP_ARABIC_TO_ENGLISH) * s
+    gap2 = GAP_ENGLISH_TO_RECITER * s if ((block_h or english) and reciter) else 0
+    gap3 = GAP_RECITER_TO_BADGE * s if ((block_h or english or reciter) and show_badge) else 0
 
-    total_h = svg_h + gap1 + (title_h or 0) + gap2 + (rec_h or 0) + gap3 + badge_h
+    total_h = block_h + gap1 + (title_h or 0) + gap2 + (rec_h or 0) + gap3 + badge_h
     start_y = (H - total_h) // 2 + config.text_offset_y * s
 
-    # Natural (un-offset) tops
-    svg_top   = start_y
-    title_top = svg_top   + svg_h + gap1
+    # Natural (un-offset) tops — name block (container+SVG) then everything below
+    block_top = start_y
+    title_top = block_top + block_h + gap1
     rec_top   = title_top + (title_h or 0) + gap2
     badge_top = rec_top   + (rec_h or 0) + gap3
 
-    # ── Draw Arabic SVG / fallback text ───────────────────────────────────────
-    svg_cx = base_cx + config.svg_offset_x * s
-    svg_y  = svg_top + config.svg_offset_y * s
-    if art:
-        canvas.alpha_composite(art, (svg_cx - svg_w // 2, svg_y))
+    # ── Draw Arabic name (inside container if enabled) ─────────────────────────
+    block_cx = base_cx + config.svg_offset_x * s
+    block_y  = block_top + config.svg_offset_y * s
+    if name_block:
+        canvas.alpha_composite(name_block, (block_cx - block_w // 2, block_y))
+    elif glyph_layer:
+        canvas.alpha_composite(glyph_layer, (block_cx - block_w // 2, block_y))
     elif arabic_text and arabic_font is not None:
-        _draw_cinematic_text(draw, (svg_cx - svg_w // 2, svg_y - arabic_bbox[1]),
+        _draw_cinematic_text(draw, (block_cx - block_w // 2, block_y - arabic_bbox[1]),
                              arabic_text, arabic_font, config.arabic_color, config.text_glow, s)
 
     # ── English title ─────────────────────────────────────────────────────────
@@ -496,13 +530,22 @@ def generate_thumbnail(
                           config.text_glow, config.badge_size * s, s)
 
     if layout_out is not None:
+        block_left = (block_cx - block_w // 2) / s
+        block_top_out = block_y / s
         layout_out.update({
-            "svg":     (svg_top + svg_h / 2) / s,
+            "svg":     (block_top + block_h / 2) / s,
             "title":   (title_top + (title_h or 0) / 2) / s,
             "reciter": (rec_top + (rec_h or 0) / 2) / s,
             "badge":   (badge_top + badge_h / 2) / s,
-            "svg_h": svg_h / s, "title_h": (title_h or 0) / s,
+            "svg_h": block_h / s, "title_h": (title_h or 0) / s,
             "rec_h": (rec_h or 0) / s, "badge_h": badge_h / s,
+            "has_name_container": bool(name_block),
+            "block_rect": (
+                block_left,
+                block_top_out,
+                block_left + block_w / s,
+                block_top_out + block_h / s,
+            ),
         })
 
     _paste_reciter_overlay(canvas, config, s)

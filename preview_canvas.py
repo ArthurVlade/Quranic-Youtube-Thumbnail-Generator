@@ -2,8 +2,9 @@
 
 from __future__ import annotations
 
+import math
 import tkinter as tk
-from typing import Literal
+from typing import Callable, Literal
 
 from PIL import Image, ImageTk
 
@@ -25,7 +26,12 @@ ELEMENT_HANDLES: list[tuple[str, str, str]] = [
     ("badge",   "#ffd166", "Badge"),    # gold
 ]
 
-DragTarget = Literal["block", "svg", "title", "reciter", "badge", "reciter_photo"]
+DragTarget = Literal[
+    "block", "svg", "title", "reciter", "badge", "reciter_photo",
+    "container_width", "container_height", "container_uniform",
+]
+
+_CONTAINER_DRAG = ("container_width", "container_height", "container_uniform")
 
 
 _SNAP_THRESHOLD_PX = 14   # output pixels: snap element X to center when within this range
@@ -35,7 +41,7 @@ class InteractivePreviewCanvas(tk.Canvas):
     HANDLE_W = 28
     HANDLE_H = 40
 
-    def __init__(self, master, on_layout_change) -> None:
+    def __init__(self, master, on_layout_change, on_container_resize: Callable[[str, float], None] | None = None) -> None:
         super().__init__(
             master,
             width=PREVIEW_W,
@@ -45,6 +51,7 @@ class InteractivePreviewCanvas(tk.Canvas):
             cursor="fleur",
         )
         self.on_layout_change = on_layout_change
+        self.on_container_resize = on_container_resize
         self.pre_w = PREVIEW_W
         self.pre_h = PREVIEW_H
         self.scale = self.pre_w / OUTPUT_W
@@ -52,6 +59,7 @@ class InteractivePreviewCanvas(tk.Canvas):
         self._source_image: Image.Image | None = None
         self._drag_target: DragTarget | None = None
         self._drag_start: tuple[int, int] | None = None
+        self._container_hover = False
 
         # Global block offset (moves all elements together)
         self.block_x = 0
@@ -82,6 +90,8 @@ class InteractivePreviewCanvas(tk.Canvas):
         self.bind("<B1-Motion>",       self._on_drag)
         self.bind("<ButtonRelease-1>", self._on_release)
         self.bind("<Double-Button-1>", self._on_double_click)
+        self.bind("<Motion>",          self._on_motion)
+        self.bind("<Leave>",           self._on_leave)
         self.bind("<KeyPress>",        self._on_key)
         self.configure(takefocus=True)
 
@@ -177,6 +187,38 @@ class InteractivePreviewCanvas(tk.Canvas):
         rh = int(rw * 0.75)
         return rx - rw // 2, ry - rh // 2, rx + rw // 2, ry + rh // 2
 
+    def _block_rect_pre(self) -> tuple[int, int, int, int] | None:
+        rect = self._layout.get("block_rect")
+        if not rect:
+            return None
+        x1, y1, x2, y2 = rect
+        return (
+            int(x1 * self.scale),
+            int(y1 * self.scale),
+            int(x2 * self.scale),
+            int(y2 * self.scale),
+        )
+
+    def _container_handle_centers(self, rect: tuple[int, int, int, int]) -> dict[str, tuple[int, int]]:
+        x1, y1, x2, y2 = rect
+        mx, my = (x1 + x2) // 2, (y1 + y2) // 2
+        return {
+            "container_width": (x2 - 10, y1 + 10),
+            "container_height": (x2 - 10, y2 - 10),
+            "container_uniform": (x1 + 10, y2 - 10),
+            "edge_width": (x2 - 4, my),
+            "edge_height": (mx, y2 - 4),
+        }
+
+    def _show_container_handles(self) -> bool:
+        return bool(
+            self._layout.get("has_name_container")
+            and (
+                self._container_hover
+                or self._drag_target in _CONTAINER_DRAG
+            )
+        )
+
     # ── drawing ───────────────────────────────────────────────────────────────
 
     def show_image(self, image: Image.Image) -> None:
@@ -229,6 +271,37 @@ class InteractivePreviewCanvas(tk.Canvas):
                                   outline="#ffd166", width=2, dash=(6, 3),
                                   tags=("handle", "h_reciter_photo"))
 
+        if self._show_container_handles():
+            rect = self._block_rect_pre()
+            if rect:
+                x1, y1, x2, y2 = rect
+                self.create_rectangle(
+                    x1, y1, x2, y2,
+                    outline="#88ffcc", width=1, dash=(4, 4),
+                    tags=("handle", "h_container"),
+                )
+                handles = self._container_handle_centers(rect)
+                specs = (
+                    ("container_width", "↔", "#6be5a0"),
+                    ("container_height", "↕", "#5b9cf6"),
+                    ("container_uniform", "⧉", "#ffd166"),
+                    ("edge_width", "↔", "#4a9e72"),
+                    ("edge_height", "↕", "#4a7ec9"),
+                )
+                for key, label, fill in specs:
+                    cx, cy = handles[key]
+                    r = 9 if key.startswith("edge_") else 11
+                    self.create_oval(
+                        cx - r, cy - r, cx + r, cy + r,
+                        fill=fill, outline="#ffffff", width=1,
+                        tags=("handle", "h_container"),
+                    )
+                    if not key.startswith("edge_"):
+                        self.create_text(
+                            cx, cy, text=label, fill="#000000",
+                            font=("Segoe UI", 8, "bold"), tags=("handle", "h_container"),
+                        )
+
     def _draw_handles_only(self) -> None:
         self.delete("guide")
         self.delete("handle")
@@ -254,17 +327,43 @@ class InteractivePreviewCanvas(tk.Canvas):
         pad = 10
         return x1 - pad <= x <= x2 + pad and y1 - pad <= y <= y2 + pad
 
+    def _hit_container_handle(self, x: int, y: int) -> DragTarget | None:
+        if not self._layout.get("has_name_container"):
+            return None
+        rect = self._block_rect_pre()
+        if not rect:
+            return None
+        if not (self._show_container_handles() or self._point_in_block(x, y)):
+            return None
+        handles = self._container_handle_centers(rect)
+        for key in ("container_width", "container_height", "container_uniform", "edge_width", "edge_height"):
+            hx, hy = handles[key]
+            if math.hypot(x - hx, y - hy) <= (14 if not key.startswith("edge_") else 12):
+                return key  # type: ignore[return-value]
+        return None
+
+    def _point_in_block(self, x: int, y: int) -> bool:
+        rect = self._block_rect_pre()
+        if not rect:
+            return False
+        x1, y1, x2, y2 = rect
+        return x1 <= x <= x2 and y1 <= y <= y2
+
     # ── event handlers ────────────────────────────────────────────────────────
 
     def _on_press(self, event) -> None:
         self.focus_set()
-        tab = self._hit_element_tab(event.x, event.y)
-        if tab:
-            self._drag_target = tab
-        elif self._hit_reciter_photo(event.x, event.y):
-            self._drag_target = "reciter_photo"
+        ch = self._hit_container_handle(event.x, event.y)
+        if ch:
+            self._drag_target = ch
         else:
-            self._drag_target = "block"
+            tab = self._hit_element_tab(event.x, event.y)
+            if tab:
+                self._drag_target = tab
+            elif self._hit_reciter_photo(event.x, event.y):
+                self._drag_target = "reciter_photo"
+            else:
+                self._drag_target = "block"
         self._drag_start = (event.x, event.y)
 
     def _snap_element_x(self, off: list[int]) -> None:
@@ -298,6 +397,12 @@ class InteractivePreviewCanvas(tk.Canvas):
         elif t == "reciter_photo":
             self.reciter_x = max(80, min(OUTPUT_W - 80, self.reciter_x + odx))
             self.reciter_y = max(80, min(OUTPUT_H - 80, self.reciter_y + ody))
+        elif t == "container_width" and self.on_container_resize:
+            self.on_container_resize("width", odx * 0.004)
+        elif t == "container_height" and self.on_container_resize:
+            self.on_container_resize("height", -ody * 0.004)
+        elif t == "container_uniform" and self.on_container_resize:
+            self.on_container_resize("uniform", (odx + -ody) * 0.003)
 
         self._drag_start = (event.x, event.y)
         self._draw_handles_only()
@@ -309,7 +414,13 @@ class InteractivePreviewCanvas(tk.Canvas):
         t = self._drag_target
         if not t or t == "reciter_photo":
             return
-        if t == "block":
+        if t == "container_width":
+            msg = "Frame width — drag left/right"
+        elif t == "container_height":
+            msg = "Frame height — drag up/down"
+        elif t == "container_uniform":
+            msg = "Frame padding — drag to scale both"
+        elif t == "block":
             msg = f"Block  x={self.block_x:+}  y={self.block_y:+}"
         else:
             off = {"svg": self.svg_off, "title": self.title_off,
@@ -323,10 +434,40 @@ class InteractivePreviewCanvas(tk.Canvas):
 
     def _on_release(self, _event) -> None:
         self.delete("draginfo")
-        if self._drag_target:
+        if self._drag_target and self._drag_target not in _CONTAINER_DRAG:
             self.on_layout_change()
         self._drag_target = None
         self._drag_start  = None
+
+    def _on_motion(self, event) -> None:
+        if not self._layout.get("has_name_container"):
+            if self._container_hover:
+                self._container_hover = False
+                self.configure(cursor="fleur")
+                self._draw_handles_only()
+            return
+        inside = self._point_in_block(event.x, event.y)
+        if inside != self._container_hover:
+            self._container_hover = inside
+            self._draw_handles_only()
+        if inside or self._drag_target in _CONTAINER_DRAG:
+            ch = self._hit_container_handle(event.x, event.y)
+            if ch in ("container_width", "edge_width"):
+                self.configure(cursor="size_we")
+            elif ch in ("container_height", "edge_height"):
+                self.configure(cursor="size_ns")
+            elif ch == "container_uniform":
+                self.configure(cursor="size_nw_se")
+            elif inside:
+                self.configure(cursor="fleur")
+        elif self._drag_target is None:
+            self.configure(cursor="fleur")
+
+    def _on_leave(self, _event) -> None:
+        if self._container_hover and self._drag_target is None:
+            self._container_hover = False
+            self.configure(cursor="fleur")
+            self._draw_handles_only()
 
     def _on_double_click(self, event) -> None:
         tab = self._hit_element_tab(event.x, event.y)
