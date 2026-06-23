@@ -1,9 +1,9 @@
 """Windows-specific helpers for a borderless (custom title bar) Tk window.
 
-Uses Win32 style stripping on the shell HWND (parent of winfo_id) so the
-window stays a normal application window on the taskbar with the correct icon.
-overrideredirect(True) is avoided — it sets WS_EX_TOOLWINDOW and hides the app
-from the taskbar on Windows.
+Strips the native caption from the Win32 shell HWND (parent of winfo_id) while
+keeping WS_EX_APPWINDOW so the app stays on the taskbar. Styles are applied
+once — repeated SetWindowPos/ShowWindow calls were leaving orphan system-menu
+controls on the desktop.
 """
 
 from __future__ import annotations
@@ -23,9 +23,6 @@ _WS_MAXIMIZEBOX = 0x00010000
 _WS_EX_APPWINDOW = 0x00040000
 _WS_EX_TOOLWINDOW = 0x00000080
 _SW_MINIMIZE = 6
-_SW_MAXIMIZE = 3
-_SW_RESTORE = 9
-_SW_SHOW = 5
 _SPI_GETWORKAREA = 0x0030
 _SWP_NOMOVE = 0x0002
 _SWP_NOSIZE = 0x0001
@@ -61,7 +58,6 @@ def shell_hwnd(root) -> int:
         wid = int(root.winfo_id())
         if not wid:
             return 0
-        # Tk draws into a child HWND; the parent is the decorated shell window.
         parent = int(_user32().GetParent(wid))
         return parent if parent else wid
     except Exception:
@@ -97,21 +93,21 @@ def _apply_hwnd_icon(hwnd: int, ico_path: Path) -> None:
         pass
 
 
-def _refresh_frame(hwnd: int) -> None:
+def _purge_system_menu(hwnd: int) -> None:
+    """Reset the system menu after stripping WS_SYSMENU (avoids orphan Close controls)."""
     if not hwnd:
         return
     try:
-        _user32().SetWindowPos(
-            hwnd, 0, 0, 0, 0, 0,
-            _SWP_NOMOVE | _SWP_NOSIZE | _SWP_NOZORDER | _SWP_FRAMECHANGED,
-        )
+        _user32().GetSystemMenu(hwnd, True)
     except Exception:
         pass
 
 
-def apply_borderless_shell(root) -> None:
+def apply_borderless_shell(root, *, force: bool = False) -> None:
     """Remove native title bar while keeping a normal taskbar presence."""
     if not _IS_WIN:
+        return
+    if getattr(root, "_win_shell_applied", False) and not force:
         return
     try:
         hwnd = shell_hwnd(root)
@@ -124,12 +120,16 @@ def apply_borderless_shell(root) -> None:
         style = get_long(hwnd, _GWL_STYLE)
         style &= ~_STRIP_STYLE
         set_long(hwnd, _GWL_STYLE, style)
+        _purge_system_menu(hwnd)
 
         exstyle = get_long(hwnd, _GWL_EXSTYLE)
         exstyle = (exstyle & ~_WS_EX_TOOLWINDOW) | _WS_EX_APPWINDOW
         set_long(hwnd, _GWL_EXSTYLE, exstyle)
 
-        _refresh_frame(hwnd)
+        user32.SetWindowPos(
+            hwnd, 0, 0, 0, 0, 0,
+            _SWP_NOMOVE | _SWP_NOSIZE | _SWP_NOZORDER | _SWP_FRAMECHANGED,
+        )
 
         title = root.title() or "Quran Thumbnail Generator"
         user32.SetWindowTextW(hwnd, title)
@@ -138,25 +138,40 @@ def apply_borderless_shell(root) -> None:
         if ico:
             _apply_hwnd_icon(hwnd, ico)
 
-        user32.ShowWindow(hwnd, _SW_SHOW)
+        root._win_shell_applied = True  # type: ignore[attr-defined]
     except Exception:
         pass
 
 
 def enable_taskbar_icon(root) -> None:
-    """Back-compat alias — borderless shell registration includes taskbar setup."""
-    apply_borderless_shell(root)
+    apply_borderless_shell(root, force=True)
 
 
 def register_taskbar_hooks(root) -> None:
-    """Re-apply shell styles after minimize/restore (Windows can reset them)."""
+    """Re-apply shell styles after restore from minimize (not on first show)."""
     if not _IS_WIN:
         return
+
+    root._win_shell_map_count = 0  # type: ignore[attr-defined]
 
     def _on_map(event) -> None:
         if event.widget is not root:
             return
-        apply_borderless_shell(root)
+        root._win_shell_map_count = getattr(root, "_win_shell_map_count", 0) + 1  # type: ignore[attr-defined]
+        if root._win_shell_map_count < 2:  # type: ignore[attr-defined]
+            return
+        job = getattr(root, "_win_shell_map_job", None)
+        if job:
+            try:
+                root.after_cancel(job)
+            except Exception:
+                pass
+
+        def _reapply() -> None:
+            root._win_shell_applied = False  # type: ignore[attr-defined]
+            apply_borderless_shell(root, force=True)
+
+        root._win_shell_map_job = root.after(120, _reapply)  # type: ignore[attr-defined]
 
     root.bind("<Map>", _on_map, add="+")
 
@@ -192,36 +207,16 @@ def get_work_area() -> tuple[int, int, int, int] | None:
 
 
 def titlebar_control_inset(maximized: bool) -> int:
-    """Right padding so window controls stay visible when maximized (Win11 insets)."""
+    """Right padding so custom window controls stay visible when maximized."""
     if not maximized or not _IS_WIN:
         return 0
     return 14
 
 
-def maximize_window(root) -> None:
-    if not _IS_WIN:
-        try:
-            root.state("zoomed")
-        except Exception:
-            area = get_work_area()
-            if area:
-                left, top, right, bottom = area
-                root.geometry(f"{right - left}x{bottom - top}+{left}+{top}")
-        return
-    try:
-        _user32().ShowWindow(shell_hwnd(root), _SW_MAXIMIZE)
-    except Exception:
-        pass
-
-
-def restore_window(root) -> None:
-    if not _IS_WIN:
-        try:
-            root.state("normal")
-        except Exception:
-            pass
-        return
-    try:
-        _user32().ShowWindow(shell_hwnd(root), _SW_RESTORE)
-    except Exception:
-        pass
+def maximize_geometry(root) -> str | None:
+    """Return a geometry string that fills the monitor work area."""
+    area = get_work_area()
+    if not area:
+        return None
+    left, top, right, bottom = area
+    return f"{right - left}x{bottom - top}+{left}+{top}"

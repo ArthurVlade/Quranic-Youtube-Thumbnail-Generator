@@ -231,7 +231,7 @@ class ReciterManagerDialog(tk.Toplevel):
         ttk.Button(buttons, text="Add Photo", command=self._add_photo).pack(side="left", padx=(8, 0))
         ttk.Button(buttons, text="Remove Photo", command=self._remove_photo).pack(side="left", padx=(8, 0))
         ttk.Button(buttons, text="Delete Reciter", command=self._delete_reciter).pack(side="left", padx=(8, 0))
-        ttk.Button(buttons, text="Close", command=self.destroy).pack(side="right")
+        ttk.Button(buttons, text="Done", command=self.destroy).pack(side="right")
 
         self._pending_photo: Path | None = None
         self.reciters: list[reciter_store.Reciter] = []
@@ -367,12 +367,6 @@ class ThumbnailApp(tk.Tk):
         self._custom_chrome = not self._saved_settings.get("native_titlebar", False)
         self._maximized = False
         self._normal_geometry = "1280x820+80+40"
-        if self._custom_chrome:
-            # Hide briefly so the native title bar never flashes during setup.
-            try:
-                self.withdraw()
-            except tk.TclError:
-                self._custom_chrome = False
 
         default = get_surah(5)
         self.surah_choice_var = tk.StringVar(value=surah_label(default) if default else "")
@@ -442,18 +436,12 @@ class ThumbnailApp(tk.Tk):
                 pass
 
     def _finalize_custom_shell(self) -> None:
-        """Apply borderless Win32 shell and show the window."""
+        """Apply borderless Win32 shell once at startup."""
         if not self._custom_chrome:
             return
         self.update_idletasks()
         win_chrome.apply_borderless_shell(self)
         win_chrome.register_taskbar_hooks(self)
-        try:
-            self.deiconify()
-        except tk.TclError:
-            pass
-        self.geometry(self._normal_geometry)
-        self.after(250, win_chrome.apply_borderless_shell)
 
     # ── custom title bar ─────────────────────────────────────────────────────
 
@@ -511,14 +499,11 @@ class ThumbnailApp(tk.Tk):
         if not getattr(self, "_tb_controls", None):
             return
         inset = win_chrome.titlebar_control_inset(self._maximized)
-        self._tb_controls.pack_configure(padx=(0, inset, 0, 0))
+        self._tb_controls.pack_configure(padx=(0, inset))
         if getattr(self, "_tb_max", None):
             self._tb_max.configure(text="\u2750" if self._maximized else "\u25A1")
 
     def _after_window_state_change(self) -> None:
-        if self._custom_chrome:
-            win_chrome.apply_borderless_shell(self)
-            self._sync_titlebar_insets()
         self.update_idletasks()
         frame = getattr(self, "_preview_frame", None)
         if frame is not None and frame.winfo_width() > 80:
@@ -547,15 +532,20 @@ class ThumbnailApp(tk.Tk):
         if not self._custom_chrome:
             return
         if self._maximized:
-            win_chrome.restore_window(self)
+            self.geometry(self._normal_geometry)
             self._maximized = False
-            if self._normal_geometry:
-                self.after(10, lambda: self.geometry(self._normal_geometry))
         else:
             self._normal_geometry = self.geometry()
-            win_chrome.maximize_window(self)
+            geo = win_chrome.maximize_geometry(self)
+            if geo:
+                self.geometry(geo)
+            else:
+                self.geometry(
+                    f"{self.winfo_screenwidth()}x{self.winfo_screenheight() - 48}+0+0"
+                )
             self._maximized = True
-        self.after(30, self._after_window_state_change)
+        self._sync_titlebar_insets()
+        self.after(50, self._after_window_state_change)
 
     def _bind_shortcuts(self) -> None:
         self.bind_all("<Control-s>", lambda _e: self.export_thumbnail())
