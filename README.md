@@ -6,10 +6,10 @@ I built this to make cinematic YouTube-style Quranic recitation thumbnails — H
 
 ### Sample output — Surah Al-Ma'idah
 
-![Sample thumbnail for Surah Al-Ma'idah](<img width="3840" height="2160" alt="005_Surah_Al-Ma&#39;idah" src="https://github.com/user-attachments/assets/085e8528-bef5-41db-8619-98e2b6a3a2e0" />
-)
+<img width="3840" height="2160" alt="005_Surah_Al-Ma&#39;idah" src="https://github.com/user-attachments/assets/ef009e37-c811-42ed-b156-f429b4549325" />
 
-*Example export: `005_Surah_Al-Ma'idah.png`. Preview above is 1280×720; you can export Full HD or 4K from the app.*
+
+*Example export: `005_Surah_Al-Ma'idah.png`. Preview above is 4k; you can export Full HD or 4K from the app.*
 
 ---
 
