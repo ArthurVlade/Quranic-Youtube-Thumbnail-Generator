@@ -45,8 +45,11 @@ class InteractivePreviewCanvas(tk.Canvas):
             cursor="fleur",
         )
         self.on_layout_change = on_layout_change
-        self.scale = PREVIEW_W / OUTPUT_W
+        self.pre_w = PREVIEW_W
+        self.pre_h = PREVIEW_H
+        self.scale = self.pre_w / OUTPUT_W
         self._photo: ImageTk.PhotoImage | None = None
+        self._source_image: Image.Image | None = None
         self._drag_target: DragTarget | None = None
         self._drag_start: tuple[int, int] | None = None
 
@@ -72,6 +75,9 @@ class InteractivePreviewCanvas(tk.Canvas):
         self._rec_size   = 44
         self._badge_size = 28
 
+        # Accurate element centres (output px) supplied by the renderer per frame.
+        self._layout: dict = {}
+
         self.bind("<ButtonPress-1>",   self._on_press)
         self.bind("<B1-Motion>",       self._on_drag)
         self.bind("<ButtonRelease-1>", self._on_release)
@@ -86,6 +92,22 @@ class InteractivePreviewCanvas(tk.Canvas):
         self._title_size = title_size
         self._rec_size   = rec_size
         self._badge_size = badge_size
+
+    def set_layout(self, layout: dict) -> None:
+        """Receive accurate element centre Ys (output px) from the renderer."""
+        self._layout = layout or {}
+
+    def set_preview_size(self, w: int, h: int) -> None:
+        """Resize the preview (keeps 16:9) and re-render the current frame."""
+        w = max(PREVIEW_W, int(w))
+        h = max(PREVIEW_H, int(h))
+        if w == self.pre_w and h == self.pre_h:
+            return
+        self.pre_w, self.pre_h = w, h
+        self.scale = self.pre_w / OUTPUT_W
+        self.configure(width=self.pre_w, height=self.pre_h)
+        if self._source_image is not None:
+            self.show_image(self._source_image)
 
     def clamp_block(self) -> None:
         self.block_x = max(TEXT_OFFSET_X_MIN, min(TEXT_OFFSET_X_MAX, self.block_x))
@@ -130,14 +152,23 @@ class InteractivePreviewCanvas(tk.Canvas):
         return {"svg": svg_y, "title": title_y, "reciter": rec_y, "badge": badge_y}
 
     def _element_handle_positions(self) -> dict[str, tuple[int, int]]:
-        """Preview-space centre of each element (approximate)."""
-        base_cx = OUTPUT_W // 2 + self.block_x
+        """Preview-space centre of each element."""
+        cx = OUTPUT_W // 2 + self.block_x
+        if self._layout:
+            L = self._layout
+            return {
+                "svg":     self._out_to_pre(cx + self.svg_off[0],     L.get("svg", 0)     + self.svg_off[1]),
+                "title":   self._out_to_pre(cx + self.title_off[0],   L.get("title", 0)   + self.title_off[1]),
+                "reciter": self._out_to_pre(cx + self.reciter_off[0], L.get("reciter", 0) + self.reciter_off[1]),
+                "badge":   self._out_to_pre(cx + self.badge_off[0],   L.get("badge", 0)   + self.badge_off[1]),
+            }
+        # Fallback approximation when no layout has been supplied yet
         nat = self._element_natural_ys()
         return {
-            "svg":     self._out_to_pre(base_cx + self.svg_off[0],     nat["svg"]     + self._svg_h // 2      + self.svg_off[1]),
-            "title":   self._out_to_pre(base_cx + self.title_off[0],   nat["title"]   + self._title_size // 2 + self.title_off[1]),
-            "reciter": self._out_to_pre(base_cx + self.reciter_off[0], nat["reciter"] + self._rec_size // 2   + self.reciter_off[1]),
-            "badge":   self._out_to_pre(base_cx + self.badge_off[0],   nat["badge"]   + self._badge_size      + self.badge_off[1]),
+            "svg":     self._out_to_pre(cx + self.svg_off[0],     nat["svg"]     + self._svg_h // 2      + self.svg_off[1]),
+            "title":   self._out_to_pre(cx + self.title_off[0],   nat["title"]   + self._title_size // 2 + self.title_off[1]),
+            "reciter": self._out_to_pre(cx + self.reciter_off[0], nat["reciter"] + self._rec_size // 2   + self.reciter_off[1]),
+            "badge":   self._out_to_pre(cx + self.badge_off[0],   nat["badge"]   + self._badge_size      + self.badge_off[1]),
         }
 
     def _reciter_rect(self) -> tuple[int, int, int, int]:
@@ -149,7 +180,8 @@ class InteractivePreviewCanvas(tk.Canvas):
     # ── drawing ───────────────────────────────────────────────────────────────
 
     def show_image(self, image: Image.Image) -> None:
-        preview = image.resize((PREVIEW_W, PREVIEW_H), Image.Resampling.LANCZOS)
+        self._source_image = image
+        preview = image.resize((self.pre_w, self.pre_h), Image.Resampling.LANCZOS)
         self._photo = ImageTk.PhotoImage(preview)
         self.delete("all")
         self.create_image(0, 0, anchor="nw", image=self._photo, tags=("bg",))
@@ -157,16 +189,16 @@ class InteractivePreviewCanvas(tk.Canvas):
         self._draw_handles()
 
     def _draw_guides(self) -> None:
-        cx = PREVIEW_W // 2
+        cx = self.pre_w // 2
         near_center = abs(self.block_x) <= 12
         line_color = "#d4af37" if near_center else "#666666"
         line_w = 2 if near_center else 1
-        self.create_line(cx, 0, cx, PREVIEW_H, fill=line_color, dash=(4, 6), width=line_w, tags=("guide",))
+        self.create_line(cx, 0, cx, self.pre_h, fill=line_color, dash=(4, 6), width=line_w, tags=("guide",))
         if near_center:
             self.create_text(cx + 5, 8, text="centered", fill="#d4af37", font=("Segoe UI", 7), anchor="nw", tags=("guide",))
         for frac in (1/3, 2/3):
-            y = int(PREVIEW_H * frac)
-            self.create_line(0, y, PREVIEW_W, y, fill="#333333", dash=(2, 8), width=1, tags=("guide",))
+            y = int(self.pre_h * frac)
+            self.create_line(0, y, self.pre_w, y, fill="#333333", dash=(2, 8), width=1, tags=("guide",))
 
     def _draw_handles(self) -> None:
         positions = self._element_handle_positions()
@@ -174,7 +206,7 @@ class InteractivePreviewCanvas(tk.Canvas):
 
         for key, color, label in ELEMENT_HANDLES:
             cx, cy = positions[key]
-            cy = max(HH // 2 + 2, min(PREVIEW_H - HH // 2 - 2, cy))
+            cy = max(HH // 2 + 2, min(self.pre_h - HH // 2 - 2, cy))
             x1, y1, x2, y2 = 2, cy - HH // 2, HW + 2, cy + HH // 2
             # Highlight the active drag target
             outline = "#ffffff" if self._drag_target == key else ""
@@ -189,10 +221,10 @@ class InteractivePreviewCanvas(tk.Canvas):
         # Reciter photo handle (dashed box)
         if self.show_reciter:
             x1, y1, x2, y2 = self._reciter_rect()
-            x1c = max(2, min(PREVIEW_W - 2, x1))
-            y1c = max(2, min(PREVIEW_H - 2, y1))
-            x2c = max(2, min(PREVIEW_W - 2, x2))
-            y2c = max(2, min(PREVIEW_H - 2, y2))
+            x1c = max(2, min(self.pre_w - 2, x1))
+            y1c = max(2, min(self.pre_h - 2, y1))
+            x2c = max(2, min(self.pre_w - 2, x2))
+            y2c = max(2, min(self.pre_h - 2, y2))
             self.create_rectangle(x1c, y1c, x2c, y2c,
                                   outline="#ffd166", width=2, dash=(6, 3),
                                   tags=("handle", "h_reciter_photo"))
@@ -210,7 +242,7 @@ class InteractivePreviewCanvas(tk.Canvas):
         HW, HH = self.HANDLE_W + 6, self.HANDLE_H // 2 + 4
         for key, _color, _label in ELEMENT_HANDLES:
             _cx, cy = positions[key]
-            cy = max(HH, min(PREVIEW_H - HH, cy))
+            cy = max(HH, min(self.pre_h - HH, cy))
             if 0 <= x <= HW + 8 and abs(y - cy) <= HH:
                 return key  # type: ignore[return-value]
         return None
@@ -284,9 +316,9 @@ class InteractivePreviewCanvas(tk.Canvas):
                    "reciter": self.reciter_off, "badge": self.badge_off}[t]
             snap = "  ·  centered" if off[0] == 0 else ""
             msg = f"{t.upper()}  x={off[0]:+}  y={off[1]:+}{snap}"
-        self.create_rectangle(PREVIEW_W - 5, PREVIEW_H - 22, PREVIEW_W - 5, PREVIEW_H - 5,
+        self.create_rectangle(self.pre_w - 5, self.pre_h - 22, self.pre_w - 5, self.pre_h - 5,
                               fill="#00000080", outline="", tags=("draginfo",))
-        self.create_text(PREVIEW_W // 2, PREVIEW_H - 10, text=msg,
+        self.create_text(self.pre_w // 2, self.pre_h - 10, text=msg,
                          fill="#d4af37", font=("Segoe UI", 8), anchor="s", tags=("draginfo",))
 
     def _on_release(self, _event) -> None:

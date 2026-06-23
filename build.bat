@@ -14,10 +14,12 @@ if exist ".venv\Scripts\python.exe" (
 )
 
 echo Ensuring assets exist before bundling ...
-"%VPY%" make_icon.py
-if not exist "assets\fonts" "%VPY%" setup_fonts.py
-if not exist "assets\backgrounds" "%VPY%" setup_backgrounds.py
-if not exist "assets\banners" "%VPY%" generate_banners.py
+"%VPY%" prepare_release_assets.py
+if errorlevel 1 (
+    echo [ERROR] Asset preparation failed.
+    pause
+    exit /b 1
+)
 
 echo Installing PyInstaller (if needed) ...
 "%VPY%" -m pip install --upgrade pyinstaller

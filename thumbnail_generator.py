@@ -48,7 +48,7 @@ class ThumbnailConfig:
     reciter_overlay_y: int = 420
     reciter_overlay_width: int = 220
     # Typography sizes
-    svg_max_height: int = 280
+    svg_max_height: int = 500
     title_size: int = 52
     reciter_size: int = 44
     badge_size: int = 28
@@ -129,9 +129,14 @@ def _is_premium_banner(stem: str) -> bool:
 
 def default_nature_background() -> Path:
     images = list_nature_backgrounds()
-    if images:
-        return images[0]
-    raise FileNotFoundError("No nature backgrounds found. Run: python setup_backgrounds.py")
+    if not images:
+        raise FileNotFoundError("No nature backgrounds found. Run: python setup_backgrounds.py")
+    # Prefer a calm mountain scene as the default
+    for stem_prefix in ("mountain", "lake", "valley"):
+        for p in images:
+            if p.stem.startswith(stem_prefix):
+                return p
+    return images[0]
 
 
 def _load_font(filename: str, size: int, weight: int | None = None) -> ImageFont.FreeTypeFont | ImageFont.ImageFont:
@@ -340,6 +345,40 @@ def _apply_banners(canvas, config, s: int = 1):
         canvas.alpha_composite(piece, (x, y))
 
 
+_BASE_CACHE: dict[tuple, Image.Image] = {}
+_BASE_CACHE_MAX = 8
+
+
+def _build_base_canvas(path: Path, W: int, H: int, overlay_opacity: float) -> Image.Image:
+    """Background + grading + overlay + vignette (everything behind the text).
+
+    Cached so repeated previews (e.g. dragging text) don't reprocess the image.
+    Returns a fresh copy each call so callers can draw on it safely.
+    """
+    try:
+        mtime = path.stat().st_mtime_ns
+    except OSError:
+        mtime = 0
+    key = (str(path), W, H, round(overlay_opacity, 3), mtime)
+    cached = _BASE_CACHE.get(key)
+    if cached is None:
+        base = _load_background(path, W, H)
+        base = ImageEnhance.Brightness(base).enhance(0.68)
+        base = ImageEnhance.Contrast(base).enhance(1.10)
+        overlay = Image.new("RGBA", (W, H), (0, 0, 0, int(255 * overlay_opacity)))
+        vignette = Image.new("RGBA", (W, H), (0, 0, 0, 0))
+        ImageDraw.Draw(vignette).ellipse(
+            (-W * 0.15, -H * 0.2, W * 1.15, H * 1.25),
+            fill=(0, 0, 0, 55),
+        )
+        cached = Image.alpha_composite(base.convert("RGBA"), overlay)
+        cached = Image.alpha_composite(cached, vignette)
+        if len(_BASE_CACHE) >= _BASE_CACHE_MAX:
+            _BASE_CACHE.pop(next(iter(_BASE_CACHE)))
+        _BASE_CACHE[key] = cached
+    return cached.copy()
+
+
 def _load_background(path: Path, out_w: int = THUMB_WIDTH, out_h: int = THUMB_HEIGHT) -> Image.Image:
     image = Image.open(path).convert("RGB")
     src_w, src_h = image.size
@@ -356,85 +395,115 @@ def _load_background(path: Path, out_w: int = THUMB_WIDTH, out_h: int = THUMB_HE
     return image.resize((out_w, out_h), Image.Resampling.LANCZOS)
 
 
-def compute_element_ys(config: ThumbnailConfig, s: int = 1) -> dict[str, int]:
-    """Natural (un-offset) stack Y positions for each element in scaled coordinates."""
-    H = THUMB_HEIGHT * s
-    stack_y = int(H * TOP_MARGIN_RATIO) + config.text_offset_y * s
-    svg_y   = stack_y
-    title_y = svg_y   + config.svg_max_height * s  + GAP_ARABIC_TO_ENGLISH * s
-    recit_y = title_y + config.title_size * s       + GAP_ENGLISH_TO_RECITER * s
-    badge_y = recit_y + config.reciter_size * s     + GAP_RECITER_TO_BADGE * s
-    return {"svg": svg_y, "title": title_y, "reciter": recit_y, "badge": badge_y}
+SVG_WIDTH_RATIO = 0.62   # surah-name SVG max width as a fraction of frame width
 
 
-def generate_thumbnail(config: ThumbnailConfig, *, _scale: int = 1) -> Image.Image:
-    """Render thumbnail.  _scale=1 → 1280×720 (preview), 2 → 2560×1440 (HD), 3 → 4K."""
+def generate_thumbnail(
+    config: ThumbnailConfig, *, _scale: int = 1, layout_out: dict | None = None
+) -> Image.Image:
+    """Render thumbnail.  _scale=1 → 1280×720 (preview), 2 → 2560×1440 (HD), 3 → 4K.
+
+    The text block is stacked using each element's *actual* rendered height and
+    vertically centred, so changing the SVG height never pushes text off-frame.
+    If ``layout_out`` is given it is filled with 1×-coordinate element centres so
+    the interactive preview can place its drag handles accurately.
+    """
     s = _scale
     W, H = THUMB_WIDTH * s, THUMB_HEIGHT * s
 
     background_path = config.background_path or default_nature_background()
-    base = _load_background(background_path, W, H)
-    base = ImageEnhance.Brightness(base).enhance(0.68)
-    base = ImageEnhance.Contrast(base).enhance(1.10)
-
-    overlay = Image.new("RGBA", (W, H), (0, 0, 0, int(255 * config.overlay_opacity)))
-    vignette = Image.new("RGBA", (W, H), (0, 0, 0, 0))
-    ImageDraw.Draw(vignette).ellipse(
-        (-W * 0.15, -H * 0.2, W * 1.15, H * 1.25),
-        fill=(0, 0, 0, 55),
-    )
-
-    canvas = Image.alpha_composite(base.convert("RGBA"), overlay)
-    canvas = Image.alpha_composite(canvas, vignette)
+    canvas = _build_base_canvas(background_path, W, H, config.overlay_opacity)
     draw   = ImageDraw.Draw(canvas)
 
     base_cx        = W // 2 + config.text_offset_x * s
     max_text_width = int(W * 0.86)
-    ys = compute_element_ys(config, s)
+    svg_max_width  = int(W * SVG_WIDTH_RATIO)
 
-    # ── Arabic SVG ────────────────────────────────────────────────────────────
-    svg_cx = base_cx + config.svg_offset_x * s
-    svg_y  = ys["svg"] + config.svg_offset_y * s
-    art = render_surah_svg(config.surah_number, max_text_width, config.arabic_color,
+    # ── Pre-measure every element so we can centre the whole block ─────────────
+    art = render_surah_svg(config.surah_number, svg_max_width, config.arabic_color,
                            max_height=config.svg_max_height * s)
+    arabic_text = "" if art else _reshape_arabic(config.arabic_surah)
+    arabic_font = arabic_bbox = None
     if art:
-        canvas.alpha_composite(art, (svg_cx - art.width // 2, svg_y))
-    elif config.arabic_surah.strip():
-        arabic_text = _reshape_arabic(config.arabic_surah)
-        if arabic_text:
-            font, bbox = _fit_text(draw, arabic_text, _arabic_font, max_text_width,
-                                   118 * s, 56 * s)
-            arabic_w = bbox[2] - bbox[0]
-            _draw_cinematic_text(draw, (svg_cx - arabic_w // 2, svg_y - bbox[1]),
-                                 arabic_text, font, config.arabic_color, config.text_glow, s)
+        svg_h, svg_w = art.height, art.width
+    elif arabic_text:
+        arabic_font, arabic_bbox = _fit_text(draw, arabic_text, _arabic_font,
+                                             max_text_width, 118 * s, 56 * s)
+        svg_h = arabic_bbox[3] - arabic_bbox[1]
+        svg_w = arabic_bbox[2] - arabic_bbox[0]
+    else:
+        svg_h = svg_w = 0
+
+    english = config.english_surah.strip().upper()
+    title_font = title_h = None
+    if english:
+        title_font, tb = _fit_text(draw, english, _title_font, max_text_width,
+                                   config.title_size * s, 20 * s)
+        title_h = tb[3] - tb[1]
+
+    reciter = config.reciter_name.strip()
+    rec_font = rec_h = None
+    if reciter:
+        rec_font, rb = _fit_text(draw, reciter.upper(), _subtitle_font, max_text_width,
+                                 config.reciter_size * s, 18 * s)
+        rec_h = rb[3] - rb[1]
+
+    show_badge = config.surah_number > 0
+    badge_h = (config.badge_size * s + 28 * s) if show_badge else 0  # text + 2*pad_y
+
+    gap1 = GAP_ARABIC_TO_ENGLISH * s if (svg_h and english) else 0
+    gap2 = GAP_ENGLISH_TO_RECITER * s if ((svg_h or english) and reciter) else 0
+    gap3 = GAP_RECITER_TO_BADGE * s if ((svg_h or english or reciter) and show_badge) else 0
+
+    total_h = svg_h + gap1 + (title_h or 0) + gap2 + (rec_h or 0) + gap3 + badge_h
+    start_y = (H - total_h) // 2 + config.text_offset_y * s
+
+    # Natural (un-offset) tops
+    svg_top   = start_y
+    title_top = svg_top   + svg_h + gap1
+    rec_top   = title_top + (title_h or 0) + gap2
+    badge_top = rec_top   + (rec_h or 0) + gap3
+
+    # ── Draw Arabic SVG / fallback text ───────────────────────────────────────
+    svg_cx = base_cx + config.svg_offset_x * s
+    svg_y  = svg_top + config.svg_offset_y * s
+    if art:
+        canvas.alpha_composite(art, (svg_cx - svg_w // 2, svg_y))
+    elif arabic_text and arabic_font is not None:
+        _draw_cinematic_text(draw, (svg_cx - svg_w // 2, svg_y - arabic_bbox[1]),
+                             arabic_text, arabic_font, config.arabic_color, config.text_glow, s)
 
     # ── English title ─────────────────────────────────────────────────────────
-    english = config.english_surah.strip().upper()
-    if english:
+    if english and title_font is not None:
         title_cx = base_cx + config.title_offset_x * s
-        title_y  = ys["title"] + config.title_offset_y * s
-        title_font, _ = _fit_text(draw, english, _title_font,
-                                   max_text_width, config.title_size * s, 20 * s)
+        title_y  = title_top + config.title_offset_y * s
         _draw_centered_line(draw, title_cx, title_y, english,
                             title_font, config.english_color, config.text_glow, s)
 
     # ── Reciter name ──────────────────────────────────────────────────────────
-    reciter = config.reciter_name.strip()
-    if reciter:
-        rec_cx  = base_cx + config.reciter_offset_x * s
-        rec_y   = ys["reciter"] + config.reciter_offset_y * s
-        rec_font, _ = _fit_text(draw, reciter.upper(), _subtitle_font,
-                                 max_text_width, config.reciter_size * s, 18 * s)
+    if reciter and rec_font is not None:
+        rec_cx = base_cx + config.reciter_offset_x * s
+        rec_y  = rec_top + config.reciter_offset_y * s
         _draw_centered_line(draw, rec_cx, rec_y, reciter.upper(),
                             rec_font, config.reciter_color, config.text_glow, s)
 
     # ── Surah badge ───────────────────────────────────────────────────────────
-    if config.surah_number > 0:
+    if show_badge:
         badge_cx = base_cx + config.badge_offset_x * s
-        badge_y  = ys["badge"] + config.badge_offset_y * s
+        badge_y  = badge_top + config.badge_offset_y * s
         _draw_surah_badge(draw, badge_cx, badge_y, config.surah_number,
                           config.badge_text_color, config.badge_accent_color,
                           config.text_glow, config.badge_size * s, s)
+
+    if layout_out is not None:
+        layout_out.update({
+            "svg":     (svg_top + svg_h / 2) / s,
+            "title":   (title_top + (title_h or 0) / 2) / s,
+            "reciter": (rec_top + (rec_h or 0) / 2) / s,
+            "badge":   (badge_top + badge_h / 2) / s,
+            "svg_h": svg_h / s, "title_h": (title_h or 0) / s,
+            "rec_h": (rec_h or 0) / s, "badge_h": badge_h / s,
+        })
 
     _paste_reciter_overlay(canvas, config, s)
     _apply_banners(canvas, config, s)

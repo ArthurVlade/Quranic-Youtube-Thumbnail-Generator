@@ -12,6 +12,7 @@ from PIL import Image, ImageTk
 
 import reciter_store
 import settings_store
+import win_chrome
 from app_paths import base_dir, ensure_initialized
 from preview_canvas import InteractivePreviewCanvas
 from surahs import SURAHS, get_surah, surah_label
@@ -28,8 +29,13 @@ from ui_theme import (
     BG_DARK,
     BG_INPUT,
     BG_PANEL,
+    CLOSE_HOVER,
+    CTRL_HOVER,
     FG_MUTED,
     FG_PRIMARY,
+    FONT_HEADING,
+    TITLEBAR_BG,
+    TITLEBAR_FG,
     apply_theme,
     style_listbox,
 )
@@ -354,12 +360,25 @@ class ThumbnailApp(tk.Tk):
         self._syncing_surah = False
         self._preview_job: str | None = None
 
+        # Custom (borderless) title bar — gracefully falls back to native chrome.
+        # Set "native_titlebar": true in data/settings.json to force native chrome.
+        self._custom_chrome = False
+        self._maximized = False
+        self._normal_geometry = "1280x820+80+40"
+        if not self._saved_settings.get("native_titlebar", False):
+            try:
+                self.overrideredirect(True)
+                self._custom_chrome = True
+                self.after(10, lambda: win_chrome.enable_taskbar_icon(self))
+            except tk.TclError:
+                self._custom_chrome = False
+
         default = get_surah(5)
         self.surah_choice_var = tk.StringVar(value=surah_label(default) if default else "")
         self.arabic_var = tk.StringVar(value=default.arabic if default else "")
         self.english_var = tk.StringVar(value=default.english if default else "")
         self.number_var = tk.StringVar(value="5")
-        self.banner_var = tk.StringVar(value="Gold Geometric Lattice")
+        self.banner_var = tk.StringVar(value="None")
         self.text_glow_var = tk.BooleanVar(value=True)
         self.show_reciter_overlay_var = tk.BooleanVar(value=False)
         self.custom_banner_path: Path | None = None
@@ -378,8 +397,8 @@ class ThumbnailApp(tk.Tk):
         self.text_offset_y_var = tk.IntVar(value=0)
         self.status_var = tk.StringVar(value="Ready")
 
-        # Typography sizes
-        self.svg_height_var = tk.IntVar(value=280)
+        # Typography sizes (defaults tuned to the cinematic reference look)
+        self.svg_height_var = tk.IntVar(value=500)
         self.title_size_var = tk.IntVar(value=52)
         self.reciter_size_var = tk.IntVar(value=44)
         self.badge_size_var = tk.IntVar(value=28)
@@ -395,15 +414,106 @@ class ThumbnailApp(tk.Tk):
         self._restore_settings()
         self._bind_shortcuts()
         self.protocol("WM_DELETE_WINDOW", self._on_close)
+        self._ui_ready = True
         self.after(100, self.update_preview)
 
     def _set_window_icon(self) -> None:
-        icon_path = base_dir() / "assets" / "icon.ico"
-        if icon_path.exists():
+        assets = base_dir() / "assets"
+        ico_path = assets / "icon.ico"
+        png_path = assets / "icon.png"
+        if ico_path.exists():
             try:
-                self.iconbitmap(default=str(icon_path))
+                self.iconbitmap(default=str(ico_path))
             except tk.TclError:
                 pass
+        # iconphoto drives the taskbar icon reliably across Windows versions
+        if png_path.exists():
+            try:
+                self._icon_image = tk.PhotoImage(file=str(png_path))
+                self.iconphoto(True, self._icon_image)
+            except tk.TclError:
+                pass
+
+    # ── custom title bar ─────────────────────────────────────────────────────
+
+    def _build_titlebar(self) -> None:
+        bar = tk.Frame(self, bg=TITLEBAR_BG, height=40)
+        bar.pack(fill="x", side="top")
+        bar.pack_propagate(False)
+        self._titlebar = bar
+
+        # App icon (small)
+        try:
+            if getattr(self, "_icon_image", None) is not None:
+                factor = max(1, self._icon_image.width() // 22)
+                self._tb_icon = self._icon_image.subsample(factor, factor)
+                tk.Label(bar, image=self._tb_icon, bg=TITLEBAR_BG).pack(side="left", padx=(12, 8))
+        except tk.TclError:
+            pass
+
+        title = tk.Label(bar, text=APP_TITLE, bg=TITLEBAR_BG, fg=TITLEBAR_FG,
+                         font=(FONT_HEADING, 10))
+        title.pack(side="left", pady=8)
+
+        # Window control buttons (right side)
+        self._tb_button(bar, "\u2715", self._on_close, hover=CLOSE_HOVER, hover_fg="#ffffff")
+        self._tb_button(bar, "\u25A1", self._toggle_maximize, hover=CTRL_HOVER)
+        self._tb_button(bar, "\u2014", self._minimize, hover=CTRL_HOVER)
+
+        # Dragging
+        for widget in (bar, title):
+            widget.bind("<ButtonPress-1>", self._tb_press)
+            widget.bind("<B1-Motion>", self._tb_drag)
+            widget.bind("<Double-Button-1>", lambda _e: self._toggle_maximize())
+
+    def _tb_button(self, parent, glyph, command, hover, hover_fg=None):
+        btn = tk.Label(parent, text=glyph, bg=TITLEBAR_BG, fg=FG_MUTED,
+                       font=("Segoe UI", 11), width=4, height=1, cursor="hand2")
+        btn.pack(side="right", fill="y")
+        normal_fg = FG_MUTED
+
+        def on_enter(_e):
+            btn.configure(bg=hover, fg=hover_fg or FG_PRIMARY)
+
+        def on_leave(_e):
+            btn.configure(bg=TITLEBAR_BG, fg=normal_fg)
+
+        btn.bind("<Enter>", on_enter)
+        btn.bind("<Leave>", on_leave)
+        btn.bind("<ButtonRelease-1>", lambda _e: command())
+        return btn
+
+    def _tb_press(self, event) -> None:
+        if self._maximized:
+            return
+        self._drag_origin = (event.x_root, event.y_root)
+        self._win_origin = (self.winfo_x(), self.winfo_y())
+
+    def _tb_drag(self, event) -> None:
+        if self._maximized or not hasattr(self, "_drag_origin"):
+            return
+        dx = event.x_root - self._drag_origin[0]
+        dy = event.y_root - self._drag_origin[1]
+        self.geometry(f"+{self._win_origin[0] + dx}+{self._win_origin[1] + dy}")
+
+    def _minimize(self) -> None:
+        win_chrome.minimize_window(self)
+
+    def _toggle_maximize(self) -> None:
+        if not self._custom_chrome:
+            return
+        if self._maximized:
+            self.geometry(self._normal_geometry)
+            self._maximized = False
+        else:
+            self._normal_geometry = self.geometry()
+            area = win_chrome.get_work_area()
+            if area:
+                left, top, right, bottom = area
+                self.geometry(f"{right - left}x{bottom - top}+{left}+{top}")
+            else:
+                self.geometry(f"{self.winfo_screenwidth()}x{self.winfo_screenheight() - 48}+0+0")
+            self._maximized = True
 
     def _bind_shortcuts(self) -> None:
         self.bind_all("<Control-s>", lambda _e: self.export_thumbnail())
@@ -434,6 +544,7 @@ class ThumbnailApp(tk.Tk):
             "badge_text_color": self.badge_text_color.color_var.get(),
             "badge_accent_color": self.badge_accent_color.color_var.get(),
             "reciter_collection": self.reciter_collection_var.get(),
+            "native_titlebar": bool(self._saved_settings.get("native_titlebar", False)),
         }
 
     def _restore_settings(self) -> None:
@@ -446,11 +557,11 @@ class ThumbnailApp(tk.Tk):
             self.banner_size_var.set(float(s.get("banner_size", 0.40)))
             if hasattr(self, "_banner_size_int"):
                 self._banner_size_int.set(int(self.banner_size_var.get() * 100))
-            self.overlay_var.set(float(s.get("overlay", 0.50)))
-            self.svg_height_var.set(int(s.get("svg_height", 280)))
-            self.title_size_var.set(int(s.get("title_size", 52)))
-            self.reciter_size_var.set(int(s.get("reciter_size", 44)))
-            self.badge_size_var.set(int(s.get("badge_size", 28)))
+            self.overlay_var.set(float(s.get("overlay", self.overlay_var.get())))
+            self.svg_height_var.set(int(s.get("svg_height", self.svg_height_var.get())))
+            self.title_size_var.set(int(s.get("title_size", self.title_size_var.get())))
+            self.reciter_size_var.set(int(s.get("reciter_size", self.reciter_size_var.get())))
+            self.badge_size_var.set(int(s.get("badge_size", self.badge_size_var.get())))
             for picker, key in [
                 (self.arabic_color, "arabic_color"),
                 (self.english_color, "english_color"),
@@ -491,7 +602,40 @@ class ThumbnailApp(tk.Tk):
             pass
         self.destroy()
 
+    def _maybe_download_first_run_assets(self) -> None:
+        """On installed builds, fetch missing fonts/scenery in the background."""
+        from app_paths import is_frozen
+        if not is_frozen():
+            return
+        from first_run_assets import needs_any_download, start_background_download
+        if not needs_any_download():
+            return
+        self.status_var.set("First launch — downloading fonts and scenery library…")
+
+        def on_progress(msg: str) -> None:
+            self.after(0, lambda: self.status_var.set(msg))
+
+        def on_done(ok: int, fail: int, err: str = "") -> None:
+            def finish():
+                if err:
+                    self.status_var.set(f"Asset download error: {err}")
+                elif fail:
+                    self.status_var.set(
+                        f"Assets ready ({ok} downloaded, {fail} skipped — check connection)."
+                    )
+                else:
+                    self.status_var.set("Assets ready.")
+                self._refresh_nature_backgrounds()
+                self.update_preview()
+
+            self.after(0, finish)
+
+        start_background_download(on_progress, on_done)
+
     def _build_ui(self) -> None:
+        if self._custom_chrome:
+            self._build_titlebar()
+
         outer = ttk.Frame(self, padding=12)
         outer.pack(fill="both", expand=True)
         outer.columnconfigure(1, weight=1)
@@ -514,26 +658,12 @@ class ThumbnailApp(tk.Tk):
         notebook = ttk.Notebook(left_shell)
         notebook.pack(fill="both", expand=True, padx=8, pady=(0, 8))
 
-        tab_surah = ttk.Frame(notebook, style="Panel.TFrame", padding=10)
-        tab_style = ttk.Frame(notebook, style="Panel.TFrame", padding=10)
-        tab_reciter = ttk.Frame(notebook, style="Panel.TFrame", padding=10)
-        tab_background = ttk.Frame(notebook, style="Panel.TFrame", padding=10)
-        tab_layout = ttk.Frame(notebook, style="Panel.TFrame", padding=10)
-        tab_export = ttk.Frame(notebook, style="Panel.TFrame", padding=10)
-
-        notebook.add(tab_surah, text="Surah")
-        notebook.add(tab_style, text="Style")
-        notebook.add(tab_reciter, text="Reciter")
-        notebook.add(tab_background, text="Background")
-        notebook.add(tab_layout, text="Banners")
-        notebook.add(tab_export, text="Export")
-
-        self._build_surah_tab(tab_surah)
-        self._build_style_tab(tab_style)
-        self._build_reciter_tab(tab_reciter)
-        self._build_background_tab(tab_background)
-        self._build_layout_tab(tab_layout)
-        self._build_export_tab(tab_export)
+        self._build_surah_tab(self._add_scroll_tab(notebook, "Surah"))
+        self._build_style_tab(self._add_scroll_tab(notebook, "Style"))
+        self._build_reciter_tab(self._add_scroll_tab(notebook, "Reciter"))
+        self._build_background_tab(self._add_scroll_tab(notebook, "Background"))
+        self._build_layout_tab(self._add_scroll_tab(notebook, "Banners"))
+        self._build_export_tab(self._add_scroll_tab(notebook, "Export"))
 
         preview_frame = ttk.LabelFrame(
             outer,
@@ -545,7 +675,54 @@ class ThumbnailApp(tk.Tk):
         preview_frame.rowconfigure(0, weight=1)
         preview_frame.columnconfigure(0, weight=1)
         self.preview_canvas = InteractivePreviewCanvas(preview_frame, on_layout_change=self._on_canvas_layout_change)
-        self.preview_canvas.grid(row=0, column=0, sticky="n")
+        self.preview_canvas.grid(row=0, column=0)
+        preview_frame.bind("<Configure>", self._on_preview_frame_resize)
+
+    def _add_scroll_tab(self, notebook, title: str):
+        """Add a notebook tab whose content scrolls, with an auto-hiding scrollbar."""
+        container = ttk.Frame(notebook, style="Panel.TFrame")
+        canvas = tk.Canvas(container, bg=BG_PANEL, highlightthickness=0, borderwidth=0)
+        vbar = ttk.Scrollbar(container, orient="vertical", command=canvas.yview)
+        inner = ttk.Frame(canvas, style="Panel.TFrame", padding=10)
+        win = canvas.create_window((0, 0), window=inner, anchor="nw")
+        canvas.configure(yscrollcommand=vbar.set)
+        canvas.pack(side="left", fill="both", expand=True)
+
+        def _sync(_e=None):
+            canvas.configure(scrollregion=canvas.bbox("all"))
+            need = inner.winfo_reqheight() > canvas.winfo_height()
+            if need and not vbar.winfo_ismapped():
+                vbar.pack(side="right", fill="y")
+            elif not need and vbar.winfo_ismapped():
+                vbar.pack_forget()
+                canvas.yview_moveto(0)
+
+        inner.bind("<Configure>", _sync)
+        canvas.bind("<Configure>", lambda e: (canvas.itemconfigure(win, width=e.width), _sync()))
+
+        def _wheel(e):
+            if vbar.winfo_ismapped():
+                canvas.yview_scroll(int(-e.delta / 120), "units")
+
+        canvas.bind("<Enter>", lambda _e: canvas.bind_all("<MouseWheel>", _wheel))
+        canvas.bind("<Leave>", lambda _e: canvas.unbind_all("<MouseWheel>"))
+
+        notebook.add(container, text=title)
+        return inner
+
+    def _on_preview_frame_resize(self, event) -> None:
+        avail_w = event.width - 24
+        avail_h = event.height - 44   # leave room for the frame title + padding
+        if avail_w < 80 or avail_h < 80:
+            return
+        w = min(avail_w, int(avail_h * 16 / 9))
+        h = int(w * 9 / 16)
+        if w == self.preview_canvas.pre_w and h == self.preview_canvas.pre_h:
+            return
+        self.preview_canvas.set_preview_size(w, h)
+        # Re-render at the scale appropriate for the new size (keeps it crisp)
+        if getattr(self, "_ui_ready", False):
+            self.schedule_preview(180)
 
     def _build_surah_tab(self, parent) -> None:
         self.surah_combo = ttk.Combobox(
@@ -677,8 +854,11 @@ class ThumbnailApp(tk.Tk):
             textvariable=self._bg_count_var if hasattr(self, "_bg_count_var") else tk.StringVar(value=""),
             style="Panel.Muted.TLabel",
         ).pack(anchor="w", padx=(16, 0))
-        ttk.Button(parent, text="Random scenery", command=self._random_nature).pack(
-            anchor="w", padx=(16, 0), pady=(4, 0)
+        scenery_btns = ttk.Frame(parent, style="Panel.TFrame")
+        scenery_btns.pack(anchor="w", fill="x", padx=(16, 0), pady=(4, 0))
+        ttk.Button(scenery_btns, text="Random scenery", command=self._random_nature).pack(side="left")
+        ttk.Button(scenery_btns, text="Fetch fresh (online)", command=self._fetch_fresh_scenery).pack(
+            side="left", padx=(8, 0)
         )
 
         ttk.Radiobutton(
@@ -819,7 +999,7 @@ class ThumbnailApp(tk.Tk):
         self._banner_data = banners  # (id, label, path)
         self._banner_lookup = {label: banner_id for banner_id, label, _path in banners}
 
-        preferred = next((label for _id, label, _path in banners if "Gold Geometric" in label), banners[0][1] if banners else "None")
+        preferred = "None"
         if self.banner_var.get() not in [lbl for _, lbl, _ in banners]:
             self.banner_var.set(preferred)
 
@@ -1004,14 +1184,19 @@ class ThumbnailApp(tk.Tk):
     # Map file stem prefixes → display category
     _CATEGORY_PREFIXES = {
         "forest": "Forests",
+        "autumn": "Forests",
+        "winter": "Forests",
         "mountain": "Mountains",
+        "valley": "Mountains",
         "lake": "Lakes",
         "spring": "Springs",
         "waterfall": "Springs",
         "river": "Springs",
         "stream": "Springs",
         "sky": "Other",
+        "meadow": "Other",
         "desert": "Other",
+        "beach": "Other",
         "canyon": "Other",
         "nature_pine": "Forests",
         "nature_calm_forest": "Forests",
@@ -1040,7 +1225,9 @@ class ThumbnailApp(tk.Tk):
 
     _CAT_PRETTY = {
         "forest": "Forest", "mountain": "Mountain", "lake": "Lake",
-        "spring": "Spring", "sky": "Sky", "nature": "Nature",
+        "spring": "Spring", "sky": "Sky", "valley": "Valley",
+        "meadow": "Meadow", "desert": "Desert", "beach": "Beach",
+        "autumn": "Autumn", "winter": "Winter", "nature": "Nature",
     }
 
     def _stem_to_label(self, stem: str) -> str:
@@ -1082,7 +1269,9 @@ class ThumbnailApp(tk.Tk):
         count = len(labels)
         self._bg_count_var.set(f"{count} image{'s' if count != 1 else ''} ({category})")
         if labels and self.nature_background_var.get() not in labels:
-            self.nature_background_var.set(labels[0])
+            # Prefer a calm mountain scene as the default selection
+            pref = next((l for l in labels if l.lower().startswith("mountain")), labels[0])
+            self.nature_background_var.set(pref)
         self._update_bg_preview()
 
     def _on_nature_selected(self) -> None:
@@ -1111,6 +1300,68 @@ class ThumbnailApp(tk.Tk):
             self.background_mode.set("nature")
             self._update_bg_preview()
             self.update_preview()
+
+    def _fetch_fresh_scenery(self) -> None:
+        """Download a brand-new, clean 4K image for guaranteed uniqueness."""
+        import random
+        import threading
+        from urllib.request import Request, urlopen
+
+        from image_quality import is_good_bytes
+
+        category = self.bg_category_var.get() if hasattr(self, "bg_category_var") else "All"
+        keyword_map = {
+            "Forests": "forest", "Mountains": "mountain", "Lakes": "lake",
+            "Springs": "waterfall", "Other": "nature landscape", "All": "nature landscape",
+        }
+        keyword = keyword_map.get(category, "nature landscape").replace(" ", ",")
+        prefix_map = {
+            "Forests": "forest", "Mountains": "mountain", "Lakes": "lake",
+            "Springs": "spring", "Other": "sky", "All": "mountain",
+        }
+        prefix = prefix_map.get(category, "mountain")
+        seed = random.randint(1, 9_999_999)
+        dest = base_dir() / "assets" / "backgrounds" / f"{prefix}_fresh_{seed}.jpg"
+        self.status_var.set("Fetching fresh 4K scenery online…")
+
+        def worker():
+            # Picsum first (reliable clean 4K), then validated keyword attempts.
+            urls = [
+                f"https://picsum.photos/seed/fresh{seed}/3840/2160",
+                f"https://loremflickr.com/3840/2160/{keyword}?lock={seed}",
+                f"https://picsum.photos/seed/fresh{seed + 31}/3840/2160",
+            ]
+            ok = False
+            for url in urls:
+                try:
+                    req = Request(url, headers={"User-Agent": "QuranThumbnailGenerator/3.0"})
+                    with urlopen(req, timeout=40) as resp:
+                        data = resp.read()
+                    if is_good_bytes(data):
+                        dest.write_bytes(data)
+                        ok = True
+                        break
+                except Exception:
+                    continue
+            self.after(0, lambda: self._on_fresh_fetched(ok, dest))
+
+        threading.Thread(target=worker, daemon=True).start()
+
+    def _on_fresh_fetched(self, ok: bool, dest: Path) -> None:
+        if not ok:
+            self.status_var.set("Could not fetch fresh scenery — check your connection.")
+            return
+        self._refresh_nature_backgrounds()
+        label = self._stem_to_label(dest.stem)
+        if label in self.nature_combo["values"]:
+            self.nature_background_var.set(label)
+        else:
+            self._filter_backgrounds("All")
+            self.nature_background_var.set(self._stem_to_label(dest.stem))
+        self.background_mode.set("nature")
+        self._update_bg_preview()
+        self.update_preview()
+        self.status_var.set("Fresh scenery added and applied.")
 
     def _on_reciter_collection_changed(self, _event=None) -> None:
         name = self.reciter_collection_var.get().strip()
@@ -1246,7 +1497,13 @@ class ThumbnailApp(tk.Tk):
                 int(self.reciter_size_var.get()),
                 int(self.badge_size_var.get()),
             )
-            image = generate_thumbnail(self._build_config())
+            layout: dict = {}
+            # Render the preview at a high-enough internal scale that it stays
+            # crisp at the current display size (matches the export look).
+            pw = getattr(self.preview_canvas, "pre_w", 640)
+            preview_scale = 1 if pw <= 1180 else (2 if pw <= 2400 else 3)
+            image = generate_thumbnail(self._build_config(), _scale=preview_scale, layout_out=layout)
+            self.preview_canvas.set_layout(layout)
             self.preview_canvas.show_image(image)
             self.status_var.set(
                 "Preview — colored tabs (left) move individual layers · drag canvas = block · arrows = nudge"
@@ -1281,9 +1538,22 @@ class ThumbnailApp(tk.Tk):
         BatchExportDialog(self, self._build_config, int(self.export_scale_var.get()))
 
 
+def _set_app_user_model_id() -> None:
+    """Tell Windows this is its own app so the taskbar uses our icon, not python's."""
+    try:
+        import ctypes
+        ctypes.windll.shell32.SetCurrentProcessExplicitAppUserModelID(
+            "ArthurVlade.QuranThumbnailGenerator"
+        )
+    except Exception:
+        pass
+
+
 def main() -> None:
+    _set_app_user_model_id()
     ensure_initialized()
     app = ThumbnailApp()
+    app._maybe_download_first_run_assets()
     app.mainloop()
 
 

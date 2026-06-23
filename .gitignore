@@ -2,6 +2,8 @@ __pycache__/
 *.py[cod]
 *.png
 !assets/**
+# Large, regenerable background library (run setup_backgrounds.py to populate)
+assets/backgrounds/
 .venv/
 data/reciter_images/
 data/reciters.json
