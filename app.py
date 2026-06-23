@@ -11,6 +11,8 @@ from tkinter import colorchooser, filedialog, messagebox, ttk
 from PIL import Image, ImageTk
 
 import reciter_store
+import settings_store
+from app_paths import base_dir, ensure_initialized
 from preview_canvas import InteractivePreviewCanvas
 from surahs import SURAHS, get_surah, surah_label
 from thumbnail_generator import (
@@ -74,7 +76,7 @@ class BatchExportDialog(tk.Toplevel):
     def __init__(self, master: "ThumbnailApp", build_config, export_scale: int = 2) -> None:
         super().__init__(master)
         self.title("Batch Export")
-        self.geometry("420x220")
+        self.geometry("440x300")
         self.resizable(False, False)
         self.transient(master)
         self.grab_set()
@@ -99,10 +101,18 @@ class BatchExportDialog(tk.Toplevel):
         ttk.Entry(folder_row, textvariable=self.folder_var, width=28).pack(side="left", fill="x", expand=True)
         ttk.Button(folder_row, text="Browse...", command=self._browse).pack(side="left", padx=(8, 0))
 
+        self.progress_var = tk.DoubleVar(value=0)
+        self.progress = ttk.Progressbar(frame, variable=self.progress_var, maximum=100)
+        self.progress.grid(row=3, column=0, columnspan=2, sticky="ew", pady=(14, 0))
+        self.progress_label = ttk.Label(frame, text="", style="Muted.TLabel")
+        self.progress_label.grid(row=4, column=0, columnspan=2, sticky="w", pady=(4, 0))
+
         buttons = ttk.Frame(frame)
-        buttons.grid(row=3, column=0, columnspan=2, sticky="ew", pady=(18, 0))
-        ttk.Button(buttons, text="Export All", style="Accent.TButton", command=self._export).pack(side="left")
+        buttons.grid(row=5, column=0, columnspan=2, sticky="ew", pady=(14, 0))
+        self.export_btn = ttk.Button(buttons, text="Export All", style="Accent.TButton", command=self._export)
+        self.export_btn.pack(side="left")
         ttk.Button(buttons, text="Cancel", command=self.destroy).pack(side="right")
+        self._cancelled = False
 
     def _browse(self) -> None:
         folder = filedialog.askdirectory(title="Select output folder")
@@ -128,10 +138,12 @@ class BatchExportDialog(tk.Toplevel):
         saved = 0
         base_config = self.build_config(warn=False)
 
-        for number in range(start, end + 1):
+        numbers = [n for n in range(start, end + 1) if get_surah(n)]
+        total = len(numbers)
+        self.export_btn.configure(state="disabled")
+
+        for idx, number in enumerate(numbers, 1):
             surah = get_surah(number)
-            if not surah:
-                continue
             config = replace(
                 base_config,
                 arabic_surah=surah.arabic,
@@ -139,8 +151,14 @@ class BatchExportDialog(tk.Toplevel):
                 surah_number=surah.number,
             )
             filename = f"{number:03d}_{surah.english.replace('Surah ', '').replace(' ', '_')}.png"
-            save_thumbnail(config, output_dir / filename, self.export_scale)
-            saved += 1
+            try:
+                save_thumbnail(config, output_dir / filename, self.export_scale)
+                saved += 1
+            except Exception:
+                pass
+            self.progress_var.set(idx / total * 100)
+            self.progress_label.configure(text=f"{idx}/{total} — {surah.english}")
+            self.update_idletasks()
 
         messagebox.showinfo(APP_TITLE, f"Exported {saved} thumbnails to:\n{output_dir}")
         self.destroy()
@@ -329,9 +347,12 @@ class ThumbnailApp(tk.Tk):
         self.geometry("1280x820")
         self.minsize(1120, 720)
         apply_theme(self)
+        self._set_window_icon()
 
         self.reciters = reciter_store.load_reciters()
+        self._saved_settings = settings_store.load_settings()
         self._syncing_surah = False
+        self._preview_job: str | None = None
 
         default = get_surah(5)
         self.surah_choice_var = tk.StringVar(value=surah_label(default) if default else "")
@@ -371,7 +392,104 @@ class ThumbnailApp(tk.Tk):
         self._refresh_reciter_options()
         self._refresh_nature_backgrounds()
         self._refresh_banners()
+        self._restore_settings()
+        self._bind_shortcuts()
+        self.protocol("WM_DELETE_WINDOW", self._on_close)
         self.after(100, self.update_preview)
+
+    def _set_window_icon(self) -> None:
+        icon_path = base_dir() / "assets" / "icon.ico"
+        if icon_path.exists():
+            try:
+                self.iconbitmap(default=str(icon_path))
+            except tk.TclError:
+                pass
+
+    def _bind_shortcuts(self) -> None:
+        self.bind_all("<Control-s>", lambda _e: self.export_thumbnail())
+        self.bind_all("<Control-S>", lambda _e: self.export_thumbnail())
+        self.bind_all("<Control-r>", lambda _e: self.update_preview())
+        self.bind_all("<Control-e>", lambda _e: self.batch_export())
+        self.bind_all("<F5>", lambda _e: self.update_preview())
+
+    # ── settings persistence ────────────────────────────────────────────────
+
+    def _settings_snapshot(self) -> dict:
+        return {
+            "banner": self.banner_var.get(),
+            "text_glow": bool(self.text_glow_var.get()),
+            "background_mode": self.background_mode.get(),
+            "nature_background": self.nature_background_var.get(),
+            "bg_category": getattr(self, "bg_category_var", tk.StringVar(value="All")).get(),
+            "export_scale": int(self.export_scale_var.get()),
+            "banner_size": float(self.banner_size_var.get()),
+            "overlay": float(self.overlay_var.get()),
+            "svg_height": int(self.svg_height_var.get()),
+            "title_size": int(self.title_size_var.get()),
+            "reciter_size": int(self.reciter_size_var.get()),
+            "badge_size": int(self.badge_size_var.get()),
+            "arabic_color": self.arabic_color.color_var.get(),
+            "english_color": self.english_color.color_var.get(),
+            "reciter_color": self.reciter_color.color_var.get(),
+            "badge_text_color": self.badge_text_color.color_var.get(),
+            "badge_accent_color": self.badge_accent_color.color_var.get(),
+            "reciter_collection": self.reciter_collection_var.get(),
+        }
+
+    def _restore_settings(self) -> None:
+        s = self._saved_settings
+        if not s:
+            return
+        try:
+            self.text_glow_var.set(bool(s.get("text_glow", True)))
+            self.export_scale_var.set(int(s.get("export_scale", 2)))
+            self.banner_size_var.set(float(s.get("banner_size", 0.40)))
+            if hasattr(self, "_banner_size_int"):
+                self._banner_size_int.set(int(self.banner_size_var.get() * 100))
+            self.overlay_var.set(float(s.get("overlay", 0.50)))
+            self.svg_height_var.set(int(s.get("svg_height", 280)))
+            self.title_size_var.set(int(s.get("title_size", 52)))
+            self.reciter_size_var.set(int(s.get("reciter_size", 44)))
+            self.badge_size_var.set(int(s.get("badge_size", 28)))
+            for picker, key in [
+                (self.arabic_color, "arabic_color"),
+                (self.english_color, "english_color"),
+                (self.reciter_color, "reciter_color"),
+                (self.badge_text_color, "badge_text_color"),
+                (self.badge_accent_color, "badge_accent_color"),
+            ]:
+                val = s.get(key)
+                if val:
+                    picker.color_var.set(val)
+                    picker._refresh_swatch()
+            banner = s.get("banner")
+            if banner and banner in [lbl for _, lbl, _ in getattr(self, "_banner_data", [])]:
+                self.banner_var.set(banner)
+                self._on_banner_selected()
+                self._build_banner_grid()
+            mode = s.get("background_mode")
+            if mode in {"nature", "reciter", "custom"}:
+                self.background_mode.set(mode)
+            cat = s.get("bg_category")
+            if cat and hasattr(self, "bg_category_var"):
+                self._filter_backgrounds(cat)
+            nature = s.get("nature_background")
+            if nature and nature in self.nature_combo["values"]:
+                self.nature_background_var.set(nature)
+                self._update_bg_preview()
+            collection = s.get("reciter_collection")
+            if collection and collection in self.reciter_combo["values"]:
+                self.reciter_collection_var.set(collection)
+                self._on_reciter_collection_changed()
+        except (tk.TclError, ValueError, KeyError):
+            pass
+
+    def _on_close(self) -> None:
+        try:
+            settings_store.save_settings(self._settings_snapshot())
+        except Exception:
+            pass
+        self.destroy()
 
     def _build_ui(self) -> None:
         outer = ttk.Frame(self, padding=12)
@@ -483,7 +601,7 @@ class ThumbnailApp(tk.Tk):
 
         def _to_float(*_):
             self.banner_size_var.set(self._banner_size_int.get() / 100)
-            self.update_preview()
+            self.schedule_preview()
 
         self._banner_size_int.trace_add("write", _to_float)
         return self._banner_size_int
@@ -496,7 +614,7 @@ class ThumbnailApp(tk.Tk):
         val_lbl.pack(side="right")
         ttk.Scale(
             row, from_=lo, to=hi, variable=var, orient="horizontal",
-            command=lambda _v: [var.set(round(var.get() / step) * step), self.update_preview()],
+            command=lambda _v: [var.set(round(var.get() / step) * step), self.schedule_preview()],
         ).pack(side="left", fill="x", expand=True, padx=(6, 6))
 
     def _build_reciter_tab(self, parent) -> None:
@@ -585,7 +703,7 @@ class ThumbnailApp(tk.Tk):
         ttk.Label(overlay_row, text="Dark overlay", style="Panel.TLabel").pack(side="left")
         ttk.Scale(
             overlay_row, from_=0.25, to=0.75, variable=self.overlay_var, orient="horizontal",
-            command=lambda _v: self.update_preview(),
+            command=lambda _v: self.schedule_preview(),
         ).pack(side="left", fill="x", expand=True, padx=(8, 0))
 
     def _build_layout_tab(self, parent) -> None:
@@ -778,7 +896,7 @@ class ThumbnailApp(tk.Tk):
         lookup = getattr(self, "_banner_lookup", {})
         banner_id = lookup.get(label, "none")
         if banner_id.startswith("custom_"):
-            path = Path(__file__).resolve().parent / "assets" / "banners" / f"{banner_id}.png"
+            path = base_dir() / "assets" / "banners" / f"{banner_id}.png"
             self.custom_banner_path = path if path.exists() else None
         else:
             self.custom_banner_path = None
@@ -791,7 +909,7 @@ class ThumbnailApp(tk.Tk):
         )
         if not path:
             return
-        dest_dir = Path(__file__).resolve().parent / "assets" / "banners"
+        dest_dir = base_dir() / "assets" / "banners"
         dest_dir.mkdir(parents=True, exist_ok=True)
         dest = dest_dir / f"custom_{Path(path).stem}.png"
         shutil.copy2(path, dest)
@@ -1103,6 +1221,19 @@ class ThumbnailApp(tk.Tk):
             banner_corner_size=float(self.banner_size_var.get()),
         )
 
+    def schedule_preview(self, delay_ms: int = 120) -> None:
+        """Debounced preview refresh — coalesces rapid slider/drag updates."""
+        if self._preview_job is not None:
+            try:
+                self.after_cancel(self._preview_job)
+            except (ValueError, tk.TclError):
+                pass
+        self._preview_job = self.after(delay_ms, self._run_scheduled_preview)
+
+    def _run_scheduled_preview(self) -> None:
+        self._preview_job = None
+        self.update_preview()
+
     def update_preview(self) -> None:
         try:
             self.preview_canvas.show_reciter = (
@@ -1151,6 +1282,7 @@ class ThumbnailApp(tk.Tk):
 
 
 def main() -> None:
+    ensure_initialized()
     app = ThumbnailApp()
     app.mainloop()
 

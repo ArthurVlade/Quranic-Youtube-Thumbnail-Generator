@@ -13,7 +13,8 @@ CDN_URL = "https://cdn.amrayn.com/qimages-c/{number}.svg"
 
 
 def _cache_dir() -> Path:
-    path = Path(__file__).resolve().parent / "assets" / "surah_svgs"
+    from app_paths import base_dir
+    path = base_dir() / "assets" / "surah_svgs"
     path.mkdir(parents=True, exist_ok=True)
     return path
 

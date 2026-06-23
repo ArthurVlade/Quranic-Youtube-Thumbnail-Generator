@@ -5,3 +5,12 @@ __pycache__/
 .venv/
 data/reciter_images/
 data/reciters.json
+data/settings.json
+
+# Build artifacts
+build/
+dist/
+Output/
+*.log
+build_log.txt
+_git_out.txt

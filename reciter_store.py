@@ -24,7 +24,8 @@ class Reciter:
 
 
 def _app_root() -> Path:
-    return Path(__file__).resolve().parent
+    from app_paths import base_dir
+    return base_dir()
 
 
 def data_dir() -> Path:
