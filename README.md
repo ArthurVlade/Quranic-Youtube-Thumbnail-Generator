@@ -1,12 +1,13 @@
 # Quranic YouTube Thumbnail Generator
 
-I built this to make cinematic YouTube-style Quranic recitation thumbnails — 1280×720 by default, exportable up to 4K. Pick a surah and I auto-fill the Arabic name, English title, and number. You can style the text, pick nature backgrounds, add optional corner banners or transparent name frames, overlay a reciter photo, drag everything into place, and batch-export a whole series.
+I built this to make cinematic YouTube-style Quranic recitation thumbnails — HD by default, exportable up to 4K. Pick a surah and it auto-fill the Arabic name, English title, and number. You can style the text, pick nature backgrounds, add optional corner banners or transparent name frames, overlay a reciter photo, drag everything into place, and batch-export a whole series. To make sure every thumbnail is unique, theres also a fetch feature that randomly fetches 4k backgrounds from the internet without any API key.
 
 ![App icon](assets/icon.png)
 
 ### Sample output — Surah Al-Ma'idah
 
-![Sample thumbnail for Surah Al-Ma'idah](assets/samples/005_surah_al-maidah.png)
+![Sample thumbnail for Surah Al-Ma'idah](<img width="3840" height="2160" alt="005_Surah_Al-Ma&#39;idah" src="https://github.com/user-attachments/assets/085e8528-bef5-41db-8619-98e2b6a3a2e0" />
+)
 
 *Example export: `005_Surah_Al-Ma'idah.png`. Preview above is 1280×720; you can export Full HD or 4K from the app.*
 
