@@ -105,13 +105,19 @@ def surah_picker_label(number: int) -> str:
     surah = get_surah(number)
     if not surah:
         return ""
-    short = surah_title(number)
+    title = surah_title(number)
+    short = title
     if short.lower().startswith("surah "):
         short = short[6:]
-    for prefix in ("Sure ", "Sourate ", "Sura ", "Surah ", "Сура ", "スーラ ", "수라 "):
+    for prefix in (
+        "Sure ", "Sourate ", "Sura ", "Surah ", "Сура ", "スーラ ", "수라 ",
+        "سورة ", "سورۂ ", "سوره ", "सूरह ", "সূরা ",
+    ):
         if short.startswith(prefix):
             short = short[len(prefix):]
             break
+    if _current == "zh" and short.startswith("第") and "章 " in short:
+        short = short.split("章 ", 1)[1]
     return f"{number}. {short}"
 
 

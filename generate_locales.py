@@ -543,12 +543,13 @@ def _english_short(english: str) -> str:
 
 
 def _surah_title(code: str, prefix: str, english: str, number: int) -> str:
-    short = _english_short(english)
-    if code == "zh":
-        return f"第{number}章 {short}"
-    if code in {"ur", "bn", "hi", "fa", "ar"}:
-        return f"{prefix} {short}"
-    return f"{prefix} {short}"
+    from surah_native_names import native_surah_name
+    from surahs import get_surah
+
+    surah = get_surah(number)
+    if not surah:
+        return f"{prefix} {_english_short(english)}"
+    return native_surah_name(code, number, surah, prefix, _english_short(english))
 
 
 def build_locale(code: str, name_en: str, native: str, prefix: str) -> dict:
