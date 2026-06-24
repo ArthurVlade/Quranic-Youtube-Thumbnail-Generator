@@ -9,7 +9,7 @@ import zipfile
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent
-VERSION = "1.1.0"
+VERSION = "1.2.0"
 APP_DIR = ROOT / "dist" / "QuranThumbnailGenerator"
 EXE = APP_DIR / "QuranThumbnailGenerator.exe"
 OUTPUT = ROOT / "Output"
