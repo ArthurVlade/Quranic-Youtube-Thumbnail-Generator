@@ -14,7 +14,8 @@ The app runs at **1280×720** in the preview and exports **HD, Full HD, or true 
 
 In-app screenshots:
 
-<img width="1331" height="818" alt="image" src="https://github.com/user-attachments/assets/9ac9f59b-d374-4145-aea9-7f943ccb3f4f" />
+<img width="1325" height="819" alt="image" src="https://github.com/user-attachments/assets/75e3093b-161b-44ac-adf3-36ff19f079b9" />
+
 
 
 <img width="1325" height="817" alt="image" src="https://github.com/user-attachments/assets/97e5da99-d555-4a1b-a939-c7a2bdb3ff47" />
