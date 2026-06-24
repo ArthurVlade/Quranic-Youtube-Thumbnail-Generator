@@ -137,4 +137,9 @@ def get_surah(number: int) -> Surah | None:
 
 
 def surah_label(surah: Surah) -> str:
-    return f"{surah.number}. {surah.english.replace('Surah ', '')}"
+    try:
+        import i18n
+
+        return i18n.surah_picker_label(surah.number)
+    except Exception:
+        return f"{surah.number}. {surah.english.replace('Surah ', '')}"

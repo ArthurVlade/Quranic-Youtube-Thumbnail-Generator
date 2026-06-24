@@ -2,7 +2,7 @@
 """PyInstaller spec for the Quran Thumbnail Generator.
 
 Build with:   pyinstaller quran_thumbnail.spec --noconfirm
-Output:       dist/QuranThumbnailGenerator/QuranThumbnailGenerator.exe  (onedir)
+Output:       dist/Quran Thumbnail Generator/Quran Thumbnail Generator.exe  (onedir)
 """
 
 from pathlib import Path
@@ -14,6 +14,7 @@ PROJECT = Path(SPECPATH)
 # Bundle the whole assets tree (fonts, banners, backgrounds, surah svg cache, icon)
 datas = [
     (str(PROJECT / "assets"), "assets"),
+    (str(PROJECT / "locales"), "locales"),
 ]
 
 a = Analysis(
@@ -33,6 +34,8 @@ a = Analysis(
         "app_paths",
         "settings_store",
         "reciter_store",
+        "i18n",
+        "language_picker",
         "win_chrome",
         "preview_canvas",
         "ui_theme",
@@ -57,7 +60,7 @@ exe = EXE(
     a.scripts,
     [],
     exclude_binaries=True,
-    name="QuranThumbnailGenerator",
+    name="Quran Thumbnail Generator",
     debug=False,
     bootloader_ignore_signals=False,
     strip=False,
@@ -79,5 +82,5 @@ coll = COLLECT(
     strip=False,
     upx=True,
     upx_exclude=[],
-    name="QuranThumbnailGenerator",
+    name="Quran Thumbnail Generator",
 )

@@ -143,6 +143,21 @@ def apply_borderless_shell(root, *, force: bool = False) -> None:
         pass
 
 
+def set_task_manager_title(root, title: str | None = None) -> None:
+    """Set the Win32 top-level window text (Task Manager / Alt+Tab friendly name)."""
+    if not _IS_WIN:
+        return
+    try:
+        root.update_idletasks()
+        hwnd = shell_hwnd(root)
+        if not hwnd:
+            return
+        label = title or root.title() or "Quran Thumbnail Generator"
+        _user32().SetWindowTextW(hwnd, label)
+    except Exception:
+        pass
+
+
 def enable_taskbar_icon(root) -> None:
     apply_borderless_shell(root, force=True)
 

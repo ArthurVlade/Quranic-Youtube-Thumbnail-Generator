@@ -61,6 +61,13 @@ echo Downloading fonts, backgrounds and generating banners/icon ...
 "%VPY%" make_icon.py
 "%VPY%" generate_name_containers.py
 
+if exist ".venv\Scripts\pythonw.exe" (
+    if not exist ".venv\Scripts\Quran Thumbnail Generator.exe" (
+        copy /Y ".venv\Scripts\pythonw.exe" ".venv\Scripts\Quran Thumbnail Generator.exe" >nul
+    )
+    echo Launcher ready: .venv\Scripts\Quran Thumbnail Generator.exe
+)
+
 echo.
 echo ==== Setup complete! ====
 echo Launch the app any time with:  run.bat

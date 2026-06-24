@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import os
 import sys
 import tkinter as tk
 import shutil
@@ -11,9 +12,11 @@ from tkinter import colorchooser, filedialog, messagebox, ttk
 
 from PIL import Image, ImageTk
 
+import i18n
 import reciter_store
 import settings_store
 import win_chrome
+from language_picker import ask_language
 from app_paths import base_dir, ensure_initialized
 from preview_canvas import InteractivePreviewCanvas
 from surahs import SURAHS, get_surah, surah_label
@@ -42,7 +45,6 @@ from ui_theme import (
     style_listbox,
 )
 
-APP_TITLE = "Quran Thumbnail Generator"
 PREVIEW_WIDTH = 640
 PREVIEW_HEIGHT = 360
 
@@ -53,11 +55,22 @@ def _hex_to_rgb(value: str) -> tuple[int, int, int]:
 
 
 class ColorPickerRow(ttk.Frame):
-    def __init__(self, master, label: str, initial: str, on_change) -> None:
+    def __init__(
+        self,
+        master,
+        label: str,
+        initial: str,
+        on_change,
+        *,
+        i18n_key: str | None = None,
+    ) -> None:
         super().__init__(master, style="Panel.TFrame")
         self.on_change = on_change
         self.color_var = tk.StringVar(value=initial)
-        ttk.Label(self, text=label, style="Panel.TLabel", width=16).pack(side="left")
+        lbl = ttk.Label(self, text=label, style="Panel.TLabel", width=16)
+        lbl.pack(side="left")
+        if i18n_key:
+            i18n.bind_widget(lbl, i18n_key)
         self.swatch = tk.Label(self, width=3, relief="flat", bd=0, cursor="hand2")
         self.swatch.pack(side="left", padx=(0, 8))
         self.swatch.bind("<Button-1>", lambda _e: self.pick())
@@ -70,7 +83,7 @@ class ColorPickerRow(ttk.Frame):
 
     def pick(self) -> None:
         rgb = _hex_to_rgb(self.color_var.get())
-        result = colorchooser.askcolor(color=rgb, title="Choose color")
+        result = colorchooser.askcolor(color=rgb, title=i18n.t("dialog.choose_color"))
         if result[1]:
             self.color_var.set(result[1])
             self._refresh_swatch()
@@ -83,7 +96,7 @@ class ColorPickerRow(ttk.Frame):
 class BatchExportDialog(tk.Toplevel):
     def __init__(self, master: "ThumbnailApp", build_config, export_scale: int = 2) -> None:
         super().__init__(master)
-        self.title("Batch Export")
+        self.title(i18n.t("dialog.batch.title"))
         self.geometry("440x300")
         self.resizable(False, False)
         self.transient(master)
@@ -94,20 +107,20 @@ class BatchExportDialog(tk.Toplevel):
         frame = ttk.Frame(self, padding=16)
         frame.pack(fill="both", expand=True)
 
-        ttk.Label(frame, text="From surah").grid(row=0, column=0, sticky="w")
+        ttk.Label(frame, text=i18n.t("dialog.batch.from")).grid(row=0, column=0, sticky="w")
         self.from_var = tk.StringVar(value="1")
         ttk.Spinbox(frame, from_=1, to=114, textvariable=self.from_var, width=8).grid(row=0, column=1, sticky="w", padx=(8, 0))
 
-        ttk.Label(frame, text="To surah").grid(row=1, column=0, sticky="w", pady=(8, 0))
+        ttk.Label(frame, text=i18n.t("dialog.batch.to")).grid(row=1, column=0, sticky="w", pady=(8, 0))
         self.to_var = tk.StringVar(value="114")
         ttk.Spinbox(frame, from_=1, to=114, textvariable=self.to_var, width=8).grid(row=1, column=1, sticky="w", padx=(8, 0), pady=(8, 0))
 
-        ttk.Label(frame, text="Output folder").grid(row=2, column=0, sticky="w", pady=(8, 0))
+        ttk.Label(frame, text=i18n.t("dialog.batch.folder")).grid(row=2, column=0, sticky="w", pady=(8, 0))
         self.folder_var = tk.StringVar()
         folder_row = ttk.Frame(frame)
         folder_row.grid(row=2, column=1, sticky="ew", padx=(8, 0), pady=(8, 0))
         ttk.Entry(folder_row, textvariable=self.folder_var, width=28).pack(side="left", fill="x", expand=True)
-        ttk.Button(folder_row, text="Browse...", command=self._browse).pack(side="left", padx=(8, 0))
+        ttk.Button(folder_row, text=i18n.t("btn.browse"), command=self._browse).pack(side="left", padx=(8, 0))
 
         self.progress_var = tk.DoubleVar(value=0)
         self.progress = ttk.Progressbar(frame, variable=self.progress_var, maximum=100)
@@ -117,26 +130,26 @@ class BatchExportDialog(tk.Toplevel):
 
         buttons = ttk.Frame(frame)
         buttons.grid(row=5, column=0, columnspan=2, sticky="ew", pady=(14, 0))
-        self.export_btn = ttk.Button(buttons, text="Export All", style="Accent.TButton", command=self._export)
+        self.export_btn = ttk.Button(buttons, text=i18n.t("dialog.batch.export_all"), style="Accent.TButton", command=self._export)
         self.export_btn.pack(side="left")
-        ttk.Button(buttons, text="Cancel", command=self.destroy).pack(side="right")
+        ttk.Button(buttons, text=i18n.t("btn.cancel"), command=self.destroy).pack(side="right")
         self._cancelled = False
 
     def _browse(self) -> None:
-        folder = filedialog.askdirectory(title="Select output folder")
+        folder = filedialog.askdirectory(title=i18n.t("dialog.folder.output"))
         if folder:
             self.folder_var.set(folder)
 
     def _export(self) -> None:
         folder = self.folder_var.get().strip()
         if not folder:
-            messagebox.showwarning(APP_TITLE, "Choose an output folder.")
+            messagebox.showwarning(i18n.t("app.title"), i18n.t("dialog.batch.choose_folder"))
             return
         try:
             start = int(self.from_var.get())
             end = int(self.to_var.get())
         except ValueError:
-            messagebox.showwarning(APP_TITLE, "Enter valid surah numbers.")
+            messagebox.showwarning(i18n.t("app.title"), i18n.t("dialog.batch.invalid_range"))
             return
         if start > end:
             start, end = end, start
@@ -155,27 +168,29 @@ class BatchExportDialog(tk.Toplevel):
             config = replace(
                 base_config,
                 arabic_surah=surah.arabic,
-                english_surah=surah.english,
+                english_surah=i18n.surah_title(surah.number),
                 surah_number=surah.number,
             )
-            filename = f"{number:03d}_{surah.english.replace('Surah ', '').replace(' ', '_')}.png"
+            title = i18n.surah_title(surah.number)
+            slug = title.replace(" ", "_").replace("/", "-")
+            filename = f"{number:03d}_{slug}.png"
             try:
                 save_thumbnail(config, output_dir / filename, self.export_scale)
                 saved += 1
             except Exception:
                 pass
             self.progress_var.set(idx / total * 100)
-            self.progress_label.configure(text=f"{idx}/{total} — {surah.english}")
+            self.progress_label.configure(text=f"{idx}/{total} — {i18n.surah_title(surah.number)}")
             self.update_idletasks()
 
-        messagebox.showinfo(APP_TITLE, f"Exported {saved} thumbnails to:\n{output_dir}")
+        messagebox.showinfo(i18n.t("app.title"), i18n.t("msg.batch.exported", count=saved, folder=output_dir))
         self.destroy()
 
 
 class ReciterManagerDialog(tk.Toplevel):
     def __init__(self, master: tk.Tk, on_change) -> None:
         super().__init__(master)
-        self.title("Manage Reciters & Photo Groups")
+        self.title(i18n.t("dialog.reciter.title"))
         self.geometry("760x480")
         self.resizable(False, False)
         self.transient(master)
@@ -191,15 +206,17 @@ class ReciterManagerDialog(tk.Toplevel):
         frame.columnconfigure(1, weight=1)
         frame.rowconfigure(0, weight=1)
 
-        reciter_frame = ttk.LabelFrame(frame, text="Reciters", padding=8)
+        reciter_frame = ttk.LabelFrame(frame, text=i18n.t("dialog.reciter.reciters"), padding=8)
         reciter_frame.grid(row=0, column=0, sticky="nsew", padx=(0, 8))
+        i18n.bind_widget(reciter_frame, "dialog.reciter.reciters")
         self.reciter_list = tk.Listbox(reciter_frame, height=14)
         style_listbox(self.reciter_list)
         self.reciter_list.pack(fill="both", expand=True)
         self.reciter_list.bind("<<ListboxSelect>>", self._on_reciter_select)
 
-        photo_frame = ttk.LabelFrame(frame, text="Photos for Selected Reciter", padding=8)
+        photo_frame = ttk.LabelFrame(frame, text=i18n.t("dialog.reciter.photos"), padding=8)
         photo_frame.grid(row=0, column=1, sticky="nsew")
+        i18n.bind_widget(photo_frame, "dialog.reciter.photos")
         self.photo_list = tk.Listbox(photo_frame, height=14)
         style_listbox(self.photo_list)
         self.photo_list.pack(fill="both", expand=True)
@@ -209,29 +226,44 @@ class ReciterManagerDialog(tk.Toplevel):
         form.grid(row=1, column=0, columnspan=2, sticky="ew", pady=(12, 0))
         form.columnconfigure(1, weight=1)
 
-        ttk.Label(form, text="Reciter name").grid(row=0, column=0, sticky="w")
+        name_lbl = ttk.Label(form, text=i18n.t("dialog.reciter.name"))
+        name_lbl.grid(row=0, column=0, sticky="w")
+        i18n.bind_widget(name_lbl, "dialog.reciter.name")
         self.name_var = tk.StringVar()
         ttk.Entry(form, textvariable=self.name_var, width=40).grid(row=0, column=1, sticky="ew", padx=(8, 0))
 
-        ttk.Label(form, text="Photo label").grid(row=1, column=0, sticky="w", pady=(8, 0))
-        self.photo_label_var = tk.StringVar(value="Portrait")
+        photo_lbl = ttk.Label(form, text=i18n.t("dialog.reciter.photo_label"))
+        photo_lbl.grid(row=1, column=0, sticky="w", pady=(8, 0))
+        i18n.bind_widget(photo_lbl, "dialog.reciter.photo_label")
+        self.photo_label_var = tk.StringVar(value=i18n.t("dialog.reciter.portrait"))
         ttk.Entry(form, textvariable=self.photo_label_var, width=40).grid(row=1, column=1, sticky="ew", padx=(8, 0), pady=(8, 0))
 
-        ttk.Label(form, text="Image file").grid(row=2, column=0, sticky="w", pady=(8, 0))
+        file_lbl = ttk.Label(form, text=i18n.t("dialog.reciter.image_file"))
+        file_lbl.grid(row=2, column=0, sticky="w", pady=(8, 0))
+        i18n.bind_widget(file_lbl, "dialog.reciter.image_file")
         file_row = ttk.Frame(form)
         file_row.grid(row=2, column=1, sticky="ew", padx=(8, 0), pady=(8, 0))
-        self.file_var = tk.StringVar(value="No image selected")
+        self.file_var = tk.StringVar(value=i18n.t("dialog.reciter.no_image"))
         ttk.Label(file_row, textvariable=self.file_var).pack(side="left", fill="x", expand=True)
-        ttk.Button(file_row, text="Browse...", command=self._browse_photo).pack(side="right")
+        browse_btn = ttk.Button(file_row, text=i18n.t("btn.browse"), command=self._browse_photo)
+        browse_btn.pack(side="right")
+        i18n.bind_widget(browse_btn, "btn.browse")
 
         buttons = ttk.Frame(frame)
         buttons.grid(row=2, column=0, columnspan=2, sticky="ew", pady=(12, 0))
-        ttk.Button(buttons, text="Add Reciter", command=self._add_reciter).pack(side="left")
-        ttk.Button(buttons, text="Save Name", command=self._save_reciter_name).pack(side="left", padx=(8, 0))
-        ttk.Button(buttons, text="Add Photo", command=self._add_photo).pack(side="left", padx=(8, 0))
-        ttk.Button(buttons, text="Remove Photo", command=self._remove_photo).pack(side="left", padx=(8, 0))
-        ttk.Button(buttons, text="Delete Reciter", command=self._delete_reciter).pack(side="left", padx=(8, 0))
-        ttk.Button(buttons, text="Done", command=self.destroy).pack(side="right")
+        for key, cmd in [
+            ("dialog.reciter.add", self._add_reciter),
+            ("dialog.reciter.save_name", self._save_reciter_name),
+            ("dialog.reciter.add_photo", self._add_photo),
+            ("dialog.reciter.remove_photo", self._remove_photo),
+            ("dialog.reciter.delete", self._delete_reciter),
+        ]:
+            btn = ttk.Button(buttons, text=i18n.t(key), command=cmd)
+            btn.pack(side="left", padx=(0 if key == "dialog.reciter.add" else 8, 0))
+            i18n.bind_widget(btn, key)
+        done_btn = ttk.Button(buttons, text=i18n.t("btn.done"), command=self.destroy)
+        done_btn.pack(side="right")
+        i18n.bind_widget(done_btn, "btn.done")
 
         self._pending_photo: Path | None = None
         self.reciters: list[reciter_store.Reciter] = []
@@ -243,7 +275,9 @@ class ReciterManagerDialog(tk.Toplevel):
         self.reciters = reciter_store.load_reciters()
         for reciter in self.reciters:
             count = len(reciter.photos)
-            self.reciter_list.insert(tk.END, f"{reciter.name} ({count} photo{'s' if count != 1 else ''})")
+            key = "dialog.reciter.photo_one" if count == 1 else "dialog.reciter.photo_many"
+            label = i18n.t(key, name=i18n.reciter_name(reciter.id, reciter.name), count=count)
+            self.reciter_list.insert(tk.END, label)
 
     def _selected_reciter(self) -> reciter_store.Reciter | None:
         selection = self.reciter_list.curselection()
@@ -261,7 +295,7 @@ class ReciterManagerDialog(tk.Toplevel):
         self.name_var.set(reciter.name)
         for photo in reciter.photos:
             exists = Path(photo.image_path).exists()
-            suffix = "" if exists else " [missing]"
+            suffix = "" if exists else i18n.t("dialog.reciter.missing")
             self.photo_list.insert(tk.END, f"{photo.label}{suffix}")
 
     def _on_photo_select(self, _event=None) -> None:
@@ -277,7 +311,7 @@ class ReciterManagerDialog(tk.Toplevel):
 
     def _browse_photo(self) -> None:
         path = filedialog.askopenfilename(
-            title="Select reciter photo",
+            title=i18n.t("dialog.reciter.photo_title"),
             filetypes=[("Images", "*.jpg *.jpeg *.png *.webp *.bmp"), ("All files", "*.*")],
         )
         if path:
@@ -287,7 +321,7 @@ class ReciterManagerDialog(tk.Toplevel):
     def _add_reciter(self) -> None:
         name = self.name_var.get().strip()
         if not name:
-            messagebox.showwarning(APP_TITLE, "Enter a reciter name.")
+            messagebox.showwarning(i18n.t("app.title"), i18n.t("msg.reciter.enter_name"))
             return
         reciter_store.add_reciter(name)
         self.name_var.set("")
@@ -296,11 +330,11 @@ class ReciterManagerDialog(tk.Toplevel):
 
     def _save_reciter_name(self) -> None:
         if not self.selected_reciter_id:
-            messagebox.showwarning(APP_TITLE, "Select a reciter first.")
+            messagebox.showwarning(i18n.t("app.title"), i18n.t("msg.reciter.select_first"))
             return
         name = self.name_var.get().strip()
         if not name:
-            messagebox.showwarning(APP_TITLE, "Enter a reciter name.")
+            messagebox.showwarning(i18n.t("app.title"), i18n.t("msg.reciter.enter_name"))
             return
         reciter_store.update_reciter_name(self.selected_reciter_id, name)
         self.refresh()
@@ -308,24 +342,24 @@ class ReciterManagerDialog(tk.Toplevel):
 
     def _add_photo(self) -> None:
         if not self.selected_reciter_id:
-            messagebox.showwarning(APP_TITLE, "Select a reciter to attach photos to.")
+            messagebox.showwarning(i18n.t("app.title"), i18n.t("msg.reciter.select_for_photos"))
             return
         if not self._pending_photo:
-            messagebox.showwarning(APP_TITLE, "Choose an image file first.")
+            messagebox.showwarning(i18n.t("app.title"), i18n.t("msg.reciter.choose_image"))
             return
-        label = self.photo_label_var.get().strip() or "Portrait"
+        label = self.photo_label_var.get().strip() or i18n.t("dialog.reciter.portrait")
         reciter_store.add_reciter_photo(self.selected_reciter_id, label, self._pending_photo)
         self._pending_photo = None
-        self.file_var.set("No image selected")
+        self.file_var.set(i18n.t("dialog.reciter.no_image"))
         self.refresh()
         self._on_reciter_select()
         self.on_change()
 
     def _remove_photo(self) -> None:
         if not self.selected_reciter_id or not self.selected_photo_id:
-            messagebox.showwarning(APP_TITLE, "Select a photo to remove.")
+            messagebox.showwarning(i18n.t("app.title"), i18n.t("msg.reciter.select_photo_remove"))
             return
-        if not messagebox.askyesno(APP_TITLE, "Remove this photo from the reciter group?"):
+        if not messagebox.askyesno(i18n.t("app.title"), i18n.t("msg.reciter.confirm_remove_photo")):
             return
         reciter_store.delete_reciter_photo(self.selected_reciter_id, self.selected_photo_id)
         self.selected_photo_id = None
@@ -335,15 +369,15 @@ class ReciterManagerDialog(tk.Toplevel):
 
     def _delete_reciter(self) -> None:
         if not self.selected_reciter_id:
-            messagebox.showwarning(APP_TITLE, "Select a reciter to delete.")
+            messagebox.showwarning(i18n.t("app.title"), i18n.t("msg.reciter.select_to_delete"))
             return
-        if not messagebox.askyesno(APP_TITLE, "Delete this reciter and all of their photos?"):
+        if not messagebox.askyesno(i18n.t("app.title"), i18n.t("msg.reciter.confirm_delete")):
             return
         reciter_store.delete_reciter(self.selected_reciter_id)
         self.selected_reciter_id = None
         self.selected_photo_id = None
         self.name_var.set("")
-        self.file_var.set("No image selected")
+        self.file_var.set(i18n.t("dialog.reciter.no_image"))
         self.refresh()
         self.on_change()
 
@@ -351,7 +385,7 @@ class ReciterManagerDialog(tk.Toplevel):
 class ThumbnailApp(tk.Tk):
     def __init__(self) -> None:
         super().__init__()
-        self.title(APP_TITLE)
+        self.title(i18n.t("app.title"))
         self.geometry("1280x820+80+40")
         self.minsize(1120, 720)
         apply_theme(self)
@@ -359,6 +393,9 @@ class ThumbnailApp(tk.Tk):
 
         self.reciters = reciter_store.load_reciters()
         self._saved_settings = settings_store.load_settings()
+        self._reciter_label_to_id: dict[str, str] = {}
+        self._bg_category_buttons: dict[str, tk.Button] = {}
+        self._tab_keys: list[str] = []
         self._syncing_surah = False
         self._preview_job: str | None = None
 
@@ -371,7 +408,7 @@ class ThumbnailApp(tk.Tk):
         default = get_surah(5)
         self.surah_choice_var = tk.StringVar(value=surah_label(default) if default else "")
         self.arabic_var = tk.StringVar(value=default.arabic if default else "")
-        self.english_var = tk.StringVar(value=default.english if default else "")
+        self.english_var = tk.StringVar(value=i18n.surah_title(5) if default else "")
         self.number_var = tk.StringVar(value="5")
         self.banner_var = tk.StringVar(value="None")
         self.text_glow_var = tk.BooleanVar(value=True)
@@ -395,7 +432,9 @@ class ThumbnailApp(tk.Tk):
         self.overlay_var = tk.DoubleVar(value=0.50)
         self.text_offset_x_var = tk.IntVar(value=0)
         self.text_offset_y_var = tk.IntVar(value=0)
-        self.status_var = tk.StringVar(value="Ready")
+        self.status_var = tk.StringVar(value=i18n.t("status.ready"))
+        self._language_display = tk.StringVar(value="")
+        self._language_was_chosen = bool(self._saved_settings.get("language_chosen", False))
 
         # Typography sizes (defaults tuned to the cinematic reference look)
         self.svg_height_var = tk.IntVar(value=500)
@@ -419,6 +458,31 @@ class ThumbnailApp(tk.Tk):
         self._finalize_custom_shell()
         self.after(100, self.update_preview)
 
+    def _ensure_window_visible(self) -> None:
+        """Force the main window on-screen and in front (fixes invisible launch via run.bat)."""
+        try:
+            self.update_idletasks()
+            self.deiconify()
+            if str(self.state()) == "iconic":
+                self.state("normal")
+            sw = self.winfo_screenwidth()
+            sh = self.winfo_screenheight()
+            w = max(int(self.winfo_width()), 400)
+            h = max(int(self.winfo_height()), 300)
+            x = int(self.winfo_x())
+            y = int(self.winfo_y())
+            off_screen = x + 120 < 0 or y + 120 < 0 or x > sw - 80 or y > sh - 80
+            if off_screen:
+                x = max(0, (sw - w) // 2)
+                y = max(0, (sh - h) // 2)
+                self.geometry(f"{w}x{h}+{x}+{y}")
+            self.lift()
+            self.focus_force()
+            self.attributes("-topmost", True)
+            self.after(350, lambda: self.attributes("-topmost", False))
+        except tk.TclError:
+            pass
+
     def _set_window_icon(self) -> None:
         assets = base_dir() / "assets"
         ico_path = assets / "icon.ico"
@@ -436,12 +500,20 @@ class ThumbnailApp(tk.Tk):
                 pass
 
     def _finalize_custom_shell(self) -> None:
-        """Apply borderless Win32 shell once at startup."""
+        """Apply borderless Win32 shell after the window is mapped."""
+        self.after(1, self._ensure_window_visible)
         if not self._custom_chrome:
+            self.after(80, lambda: win_chrome.set_task_manager_title(self, i18n.t("app.title")))
             return
-        self.update_idletasks()
-        win_chrome.apply_borderless_shell(self)
-        win_chrome.register_taskbar_hooks(self)
+
+        def _apply_shell() -> None:
+            self.update_idletasks()
+            win_chrome.apply_borderless_shell(self)
+            win_chrome.register_taskbar_hooks(self)
+            win_chrome.set_task_manager_title(self, i18n.t("app.title"))
+            self._ensure_window_visible()
+
+        self.after(120, _apply_shell)
 
     # ── custom title bar ─────────────────────────────────────────────────────
 
@@ -460,9 +532,10 @@ class ThumbnailApp(tk.Tk):
         except tk.TclError:
             pass
 
-        title = tk.Label(bar, text=APP_TITLE, bg=TITLEBAR_BG, fg=TITLEBAR_FG,
+        title = tk.Label(bar, text=i18n.t("app.title"), bg=TITLEBAR_BG, fg=TITLEBAR_FG,
                          font=(FONT_HEADING, 10))
         title.pack(side="left", pady=8)
+        self._titlebar_label = title
 
         # Window control buttons (right side, inset when maximized on Win11)
         self._tb_controls = tk.Frame(bar, bg=TITLEBAR_BG)
@@ -580,6 +653,11 @@ class ThumbnailApp(tk.Tk):
             "badge_text_color": self.badge_text_color.color_var.get(),
             "badge_accent_color": self.badge_accent_color.color_var.get(),
             "reciter_collection": self.reciter_collection_var.get(),
+            "language": i18n.get_language(),
+            "language_chosen": bool(
+                getattr(self, "_language_was_chosen", False)
+                or self._saved_settings.get("language_chosen", False)
+            ),
             "native_titlebar": bool(self._saved_settings.get("native_titlebar", False)),
         }
 
@@ -675,7 +753,7 @@ class ThumbnailApp(tk.Tk):
         from first_run_assets import needs_any_download, start_background_download
         if not needs_any_download():
             return
-        self.status_var.set("First launch — downloading fonts and scenery library…")
+        self.status_var.set(i18n.t("status.downloading"))
 
         def on_progress(msg: str) -> None:
             self.after(0, lambda: self.status_var.set(msg))
@@ -683,13 +761,11 @@ class ThumbnailApp(tk.Tk):
         def on_done(ok: int, fail: int, err: str = "") -> None:
             def finish():
                 if err:
-                    self.status_var.set(f"Asset download error: {err}")
+                    self.status_var.set(i18n.t("status.asset_error", error=err))
                 elif fail:
-                    self.status_var.set(
-                        f"Assets ready ({ok} downloaded, {fail} skipped — check connection)."
-                    )
+                    self.status_var.set(i18n.t("status.assets_partial", ok=ok, fail=fail))
                 else:
-                    self.status_var.set("Assets ready.")
+                    self.status_var.set(i18n.t("status.assets_ready"))
                 self._refresh_nature_backgrounds()
                 self.update_preview()
 
@@ -712,30 +788,40 @@ class ThumbnailApp(tk.Tk):
 
         header = ttk.Frame(left_shell, style="Panel.TFrame", padding=(12, 12, 12, 4))
         header.pack(fill="x")
-        ttk.Label(header, text="Thumbnail Settings", style="Panel.Heading.TLabel").pack(anchor="w")
-        ttk.Label(
+        hdr = ttk.Label(header, text=i18n.t("header.settings"), style="Panel.Heading.TLabel")
+        hdr.pack(anchor="w")
+        i18n.bind_widget(hdr, "header.settings")
+        hint = ttk.Label(
             header,
-            text="Use tabs below — drag preview handles or arrow keys to move text.",
+            text=i18n.t("header.hint"),
             style="Panel.Muted.TLabel",
             wraplength=360,
-        ).pack(anchor="w", pady=(4, 0))
+        )
+        hint.pack(anchor="w", pady=(4, 0))
+        i18n.bind_widget(hint, "header.hint")
+        self._build_language_bar(header)
 
         notebook = ttk.Notebook(left_shell)
         notebook.pack(fill="both", expand=True, padx=8, pady=(0, 8))
+        self._notebook = notebook
+        self._tab_keys = [
+            "tab.surah", "tab.style", "tab.reciter", "tab.background", "tab.banners", "tab.export",
+        ]
 
-        self._build_surah_tab(self._add_scroll_tab(notebook, "Surah"))
-        self._build_style_tab(self._add_scroll_tab(notebook, "Style"))
-        self._build_reciter_tab(self._add_scroll_tab(notebook, "Reciter"))
-        self._build_background_tab(self._add_scroll_tab(notebook, "Background"))
-        self._build_layout_tab(self._add_scroll_tab(notebook, "Banners"))
-        self._build_export_tab(self._add_scroll_tab(notebook, "Export"))
+        self._build_surah_tab(self._add_scroll_tab(notebook, "tab.surah"))
+        self._build_style_tab(self._add_scroll_tab(notebook, "tab.style"))
+        self._build_reciter_tab(self._add_scroll_tab(notebook, "tab.reciter"))
+        self._build_background_tab(self._add_scroll_tab(notebook, "tab.background"))
+        self._build_layout_tab(self._add_scroll_tab(notebook, "tab.banners"))
+        self._build_export_tab(self._add_scroll_tab(notebook, "tab.export"))
 
         preview_frame = ttk.LabelFrame(
             outer,
-            text="Preview — colored tabs on left = per-layer handles · drag canvas = move block · double-click = reset · arrows = nudge",
+            text=i18n.t("preview.frame"),
             style="Dark.TLabelframe",
             padding=8,
         )
+        i18n.bind_widget(preview_frame, "preview.frame")
         preview_frame.grid(row=0, column=1, sticky="nsew")
         preview_frame.rowconfigure(0, weight=1)
         preview_frame.columnconfigure(0, weight=1)
@@ -748,7 +834,28 @@ class ThumbnailApp(tk.Tk):
         self.preview_canvas.grid(row=0, column=0)
         preview_frame.bind("<Configure>", self._on_preview_frame_resize)
 
-    def _add_scroll_tab(self, notebook, title: str):
+    def _build_language_bar(self, parent) -> None:
+        lang_frame = ttk.Frame(parent, style="Panel.TFrame")
+        lang_frame.pack(fill="x", pady=(10, 0))
+
+        current_lbl = ttk.Label(lang_frame, text=i18n.t("language.current"), style="Panel.TLabel")
+        current_lbl.pack(side="left")
+        i18n.bind_widget(current_lbl, "language.current")
+
+        name_lbl = ttk.Label(lang_frame, textvariable=self._language_display, style="Panel.TLabel")
+        name_lbl.pack(side="left", padx=(6, 0))
+
+        change_btn = ttk.Button(
+            lang_frame,
+            text=i18n.t("language.change_btn"),
+            command=self._change_language,
+        )
+        change_btn.pack(side="right")
+        i18n.bind_widget(change_btn, "language.change_btn")
+
+        self._language_display.set(self._language_display_name())
+
+    def _add_scroll_tab(self, notebook, tab_key: str):
         """Add a notebook tab whose content scrolls, with an auto-hiding scrollbar."""
         container = ttk.Frame(notebook, style="Panel.TFrame")
         canvas = tk.Canvas(container, bg=BG_PANEL, highlightthickness=0, borderwidth=0)
@@ -777,7 +884,7 @@ class ThumbnailApp(tk.Tk):
         canvas.bind("<Enter>", lambda _e: canvas.bind_all("<MouseWheel>", _wheel))
         canvas.bind("<Leave>", lambda _e: canvas.unbind_all("<MouseWheel>"))
 
-        notebook.add(container, text=title)
+        notebook.add(container, text=i18n.t(tab_key))
         return inner
 
     def _on_preview_frame_resize(self, event) -> None:
@@ -805,49 +912,73 @@ class ThumbnailApp(tk.Tk):
         self.surah_combo.pack(anchor="w", pady=(0, 8))
         self.surah_combo.bind("<<ComboboxSelected>>", self._on_surah_selected)
 
-        self._field(parent, "Arabic name", self.arabic_var)
-        self._field(parent, "English title (transliteration)", self.english_var)
-        self._field(parent, "Surah number", self.number_var, width=10, handler=self._on_number_typed)
+        self._field(parent, "field.arabic_name", self.arabic_var)
+        self._field(parent, "field.english_title", self.english_var)
+        self._field(parent, "field.surah_number", self.number_var, width=10, handler=self._on_number_typed)
 
-        ttk.Label(
+        surah_hint = ttk.Label(
             parent,
-            text="Stylized Arabic loads from Amrayn SVG. English title, reciter name, and surah badge render below it.",
+            text=i18n.t("surah.hint"),
             style="Panel.Muted.TLabel",
             wraplength=350,
-        ).pack(anchor="w", pady=(10, 0))
+        )
+        surah_hint.pack(anchor="w", pady=(10, 0))
+        i18n.bind_widget(surah_hint, "surah.hint")
 
     def _build_style_tab(self, parent) -> None:
         # ── Colors ──────────────────────────────────────────────────────────
-        ttk.Label(parent, text="Colors", style="Panel.Heading.TLabel").pack(anchor="w", pady=(0, 6))
-        self.arabic_color = ColorPickerRow(parent, "Arabic / SVG", "#ffffff", self.update_preview)
+        colors_hdr = ttk.Label(parent, text=i18n.t("style.colors"), style="Panel.Heading.TLabel")
+        colors_hdr.pack(anchor="w", pady=(0, 6))
+        i18n.bind_widget(colors_hdr, "style.colors")
+        self.arabic_color = ColorPickerRow(
+            parent, i18n.t("color.arabic"), "#ffffff", self.update_preview, i18n_key="color.arabic",
+        )
         self.arabic_color.pack(anchor="w", fill="x", pady=(0, 4))
-        self.english_color = ColorPickerRow(parent, "English title", "#ffffff", self.update_preview)
+        self.english_color = ColorPickerRow(
+            parent, i18n.t("color.english"), "#ffffff", self.update_preview, i18n_key="color.english",
+        )
         self.english_color.pack(anchor="w", fill="x", pady=(0, 4))
-        self.reciter_color = ColorPickerRow(parent, "Reciter name", "#ffffff", self.update_preview)
+        self.reciter_color = ColorPickerRow(
+            parent, i18n.t("color.reciter"), "#ffffff", self.update_preview, i18n_key="color.reciter",
+        )
         self.reciter_color.pack(anchor="w", fill="x", pady=(0, 4))
-        self.badge_text_color = ColorPickerRow(parent, "Badge number", "#ffffff", self.update_preview)
+        self.badge_text_color = ColorPickerRow(
+            parent, i18n.t("color.badge_text"), "#ffffff", self.update_preview, i18n_key="color.badge_text",
+        )
         self.badge_text_color.pack(anchor="w", fill="x", pady=(0, 4))
-        self.badge_accent_color = ColorPickerRow(parent, "Badge accent", "#d4af37", self.update_preview)
+        self.badge_accent_color = ColorPickerRow(
+            parent, i18n.t("color.badge_accent"), "#d4af37", self.update_preview, i18n_key="color.badge_accent",
+        )
         self.badge_accent_color.pack(anchor="w", fill="x", pady=(0, 4))
-        ttk.Checkbutton(parent, text="Soft glow", variable=self.text_glow_var, command=self.update_preview).pack(anchor="w", pady=(4, 0))
+        glow = ttk.Checkbutton(
+            parent, text=i18n.t("color.soft_glow"), variable=self.text_glow_var, command=self.update_preview,
+        )
+        glow.pack(anchor="w", pady=(4, 0))
+        i18n.bind_widget(glow, "color.soft_glow")
 
         ttk.Separator(parent, orient="horizontal").pack(fill="x", pady=(12, 8))
 
         # ── Typography sizes ─────────────────────────────────────────────────
-        ttk.Label(parent, text="Typography sizes", style="Panel.Heading.TLabel").pack(anchor="w", pady=(0, 8))
-        self._size_row(parent, "Arabic SVG height", self.svg_height_var, 80, 500, 5)
-        self._size_row(parent, "English title (pt)", self.title_size_var, 20, 90, 2)
-        self._size_row(parent, "Reciter name (pt)", self.reciter_size_var, 16, 70, 2)
-        self._size_row(parent, "Badge number (pt)", self.badge_size_var, 14, 52, 2)
+        typo_hdr = ttk.Label(parent, text=i18n.t("style.typography"), style="Panel.Heading.TLabel")
+        typo_hdr.pack(anchor="w", pady=(0, 8))
+        i18n.bind_widget(typo_hdr, "style.typography")
+        self._size_row(parent, "size.arabic_svg", self.svg_height_var, 80, 500, 5)
+        self._size_row(parent, "size.english_title", self.title_size_var, 20, 90, 2)
+        self._size_row(parent, "size.reciter", self.reciter_size_var, 16, 70, 2)
+        self._size_row(parent, "size.badge", self.badge_size_var, 14, 52, 2)
 
         ttk.Separator(parent, orient="horizontal").pack(fill="x", pady=(12, 8))
-        ttk.Label(parent, text="Surah name container", style="Panel.Heading.TLabel").pack(anchor="w", pady=(0, 4))
-        ttk.Label(
+        container_hdr = ttk.Label(parent, text=i18n.t("style.container"), style="Panel.Heading.TLabel")
+        container_hdr.pack(anchor="w", pady=(0, 4))
+        i18n.bind_widget(container_hdr, "style.container")
+        container_hint = ttk.Label(
             parent,
-            text="Ornate frame around the Arabic surah name only. English title, reciter, and badge stay below.",
+            text=i18n.t("style.container_hint"),
             style="Panel.Muted.TLabel",
             wraplength=360,
-        ).pack(anchor="w", pady=(0, 6))
+        )
+        container_hint.pack(anchor="w", pady=(0, 6))
+        i18n.bind_widget(container_hint, "style.container_hint")
 
         self._container_grid_frame = ttk.Frame(parent, style="Panel.TFrame")
         self._container_grid_frame.pack(fill="x")
@@ -855,7 +986,9 @@ class ThumbnailApp(tk.Tk):
 
         container_scale_row = ttk.Frame(parent, style="Panel.TFrame")
         container_scale_row.pack(fill="x", pady=(6, 0))
-        ttk.Label(container_scale_row, text="Container opacity", style="Panel.TLabel", width=20).pack(side="left")
+        opacity_lbl = ttk.Label(container_scale_row, text=i18n.t("style.container_opacity"), style="Panel.TLabel", width=20)
+        opacity_lbl.pack(side="left")
+        i18n.bind_widget(opacity_lbl, "style.container_opacity")
         self._container_opacity_pct = tk.IntVar(value=88)
 
         def _container_opacity_update(*_):
@@ -872,7 +1005,9 @@ class ThumbnailApp(tk.Tk):
 
         container_height_row = ttk.Frame(parent, style="Panel.TFrame")
         container_height_row.pack(fill="x", pady=(6, 0))
-        ttk.Label(container_height_row, text="Container height", style="Panel.TLabel", width=20).pack(side="left")
+        height_lbl = ttk.Label(container_height_row, text=i18n.t("style.container_height"), style="Panel.TLabel", width=20)
+        height_lbl.pack(side="left")
+        i18n.bind_widget(height_lbl, "style.container_height")
         self._container_height_pct = tk.IntVar(value=100)
 
         def _container_height_update(*_):
@@ -889,7 +1024,9 @@ class ThumbnailApp(tk.Tk):
 
         container_width_row = ttk.Frame(parent, style="Panel.TFrame")
         container_width_row.pack(fill="x", pady=(6, 0))
-        ttk.Label(container_width_row, text="Container width", style="Panel.TLabel", width=20).pack(side="left")
+        width_lbl = ttk.Label(container_width_row, text=i18n.t("style.container_width"), style="Panel.TLabel", width=20)
+        width_lbl.pack(side="left")
+        i18n.bind_widget(width_lbl, "style.container_width")
         self._container_width_pct = tk.IntVar(value=100)
 
         def _container_width_update(*_):
@@ -904,16 +1041,18 @@ class ThumbnailApp(tk.Tk):
         ).pack(side="left", fill="x", expand=True, padx=(6, 6))
         ttk.Label(container_width_row, textvariable=self._container_width_pct, style="Panel.TLabel", width=4).pack(side="right")
 
-        ttk.Label(
+        preview_hint = ttk.Label(
             parent,
-            text="Hover the frame in preview: ↔ width, ↕ height, ⧉ uniform padding. Arabic SVG size is separate (Typography tab).",
+            text=i18n.t("style.container_preview_hint"),
             style="Panel.Muted.TLabel",
             wraplength=360,
-        ).pack(anchor="w", pady=(6, 0))
-
-        ttk.Button(parent, text="Upload custom container...", command=self._upload_custom_container).pack(
-            anchor="w", pady=(8, 0)
         )
+        preview_hint.pack(anchor="w", pady=(6, 0))
+        i18n.bind_widget(preview_hint, "style.container_preview_hint")
+
+        upload_btn = ttk.Button(parent, text=i18n.t("style.upload_container"), command=self._upload_custom_container)
+        upload_btn.pack(anchor="w", pady=(8, 0))
+        i18n.bind_widget(upload_btn, "style.upload_container")
 
     def _banner_size_int_var(self) -> tk.IntVar:
         """Return an IntVar (percent 10-60) that stays in sync with banner_size_var (0.10-0.60)."""
@@ -928,10 +1067,12 @@ class ThumbnailApp(tk.Tk):
         self._banner_size_int.trace_add("write", _to_float)
         return self._banner_size_int
 
-    def _size_row(self, parent, label: str, var: tk.IntVar, lo: int, hi: int, step: int) -> None:
+    def _size_row(self, parent, label_key: str, var: tk.IntVar, lo: int, hi: int, step: int) -> None:
         row = ttk.Frame(parent, style="Panel.TFrame")
         row.pack(fill="x", pady=(0, 6))
-        ttk.Label(row, text=label, style="Panel.TLabel", width=20).pack(side="left")
+        lbl = ttk.Label(row, text=i18n.t(label_key), style="Panel.TLabel", width=20)
+        lbl.pack(side="left")
+        i18n.bind_widget(lbl, label_key)
         val_lbl = ttk.Label(row, textvariable=var, style="Panel.TLabel", width=4)
         val_lbl.pack(side="right")
         ttk.Scale(
@@ -940,47 +1081,62 @@ class ThumbnailApp(tk.Tk):
         ).pack(side="left", fill="x", expand=True, padx=(6, 6))
 
     def _build_reciter_tab(self, parent) -> None:
-        ttk.Label(parent, text="Collection (photo group)", style="Panel.TLabel").pack(anchor="w")
+        coll_lbl = ttk.Label(parent, text=i18n.t("reciter.collection"), style="Panel.TLabel")
+        coll_lbl.pack(anchor="w")
+        i18n.bind_widget(coll_lbl, "reciter.collection")
         collection_row = ttk.Frame(parent, style="Panel.TFrame")
         collection_row.pack(fill="x", pady=(4, 8))
         self.reciter_combo = ttk.Combobox(collection_row, textvariable=self.reciter_collection_var, state="readonly", width=24)
         self.reciter_combo.pack(side="left", fill="x", expand=True)
         self.reciter_combo.bind("<<ComboboxSelected>>", self._on_reciter_collection_changed)
-        ttk.Button(collection_row, text="Manage...", command=self._open_reciter_manager).pack(side="left", padx=(8, 0))
+        manage_btn = ttk.Button(collection_row, text=i18n.t("reciter.manage"), command=self._open_reciter_manager)
+        manage_btn.pack(side="left", padx=(8, 0))
+        i18n.bind_widget(manage_btn, "reciter.manage")
 
-        self._field(parent, "Name on thumbnail", self.reciter_display_var)
-        ttk.Label(parent, text="Reciter photo", style="Panel.TLabel").pack(anchor="w", pady=(8, 0))
+        self._field(parent, "reciter.name_on_thumb", self.reciter_display_var)
+        photo_lbl = ttk.Label(parent, text=i18n.t("reciter.photo"), style="Panel.TLabel")
+        photo_lbl.pack(anchor="w", pady=(8, 0))
+        i18n.bind_widget(photo_lbl, "reciter.photo")
         self.reciter_photo_combo = ttk.Combobox(parent, textvariable=self.reciter_photo_var, state="readonly", width=36)
         self.reciter_photo_combo.pack(anchor="w", pady=(4, 0))
         self.reciter_photo_combo.bind("<<ComboboxSelected>>", lambda _e: self.update_preview())
 
         photo_actions = ttk.Frame(parent, style="Panel.TFrame")
         photo_actions.pack(anchor="w", fill="x", pady=(8, 0))
-        ttk.Button(photo_actions, text="Add reciter photo...", command=self._quick_add_reciter_photo).pack(side="left")
-        ttk.Checkbutton(
+        add_photo_btn = ttk.Button(photo_actions, text=i18n.t("reciter.add_photo"), command=self._quick_add_reciter_photo)
+        add_photo_btn.pack(side="left")
+        i18n.bind_widget(add_photo_btn, "reciter.add_photo")
+        overlay_chk = ttk.Checkbutton(
             parent,
-            text="Show reciter photo on thumbnail (drag gold handle in preview)",
+            text=i18n.t("reciter.show_overlay"),
             variable=self.show_reciter_overlay_var,
             command=self.update_preview,
-        ).pack(anchor="w", pady=(10, 0))
+        )
+        overlay_chk.pack(anchor="w", pady=(10, 0))
+        i18n.bind_widget(overlay_chk, "reciter.show_overlay")
 
     def _build_background_tab(self, parent) -> None:
-        ttk.Radiobutton(
-            parent, text="Nature scenery", variable=self.background_mode, value="nature",
+        nature_rb = ttk.Radiobutton(
+            parent, text=i18n.t("bg.nature"), variable=self.background_mode, value="nature",
             command=self.update_preview,
-        ).pack(anchor="w")
+        )
+        nature_rb.pack(anchor="w")
+        i18n.bind_widget(nature_rb, "bg.nature")
 
         # Category filter bar
         self.bg_category_var = tk.StringVar(value="All")
         cat_frame = ttk.Frame(parent, style="Panel.TFrame")
         cat_frame.pack(fill="x", padx=(16, 0), pady=(4, 2))
+        self._bg_category_buttons.clear()
         for cat in ("All", "Forests", "Mountains", "Lakes", "Springs", "Other"):
-            tk.Button(
-                cat_frame, text=cat, font=("Segoe UI", 8),
+            btn = tk.Button(
+                cat_frame, text=i18n.category_name(cat), font=("Segoe UI", 8),
                 bg="#1e2129", fg="#aaaaaa", activebackground="#d4af37",
                 relief="flat", bd=0, padx=6, pady=2, cursor="hand2",
                 command=lambda c=cat: self._filter_backgrounds(c),
-            ).pack(side="left", padx=(0, 4))
+            )
+            btn.pack(side="left", padx=(0, 4))
+            self._bg_category_buttons[cat] = btn
 
         nature_row = ttk.Frame(parent, style="Panel.TFrame")
         nature_row.pack(fill="x", padx=(16, 0), pady=(2, 0))
@@ -1001,94 +1157,133 @@ class ThumbnailApp(tk.Tk):
         ).pack(anchor="w", padx=(16, 0))
         scenery_btns = ttk.Frame(parent, style="Panel.TFrame")
         scenery_btns.pack(anchor="w", fill="x", padx=(16, 0), pady=(4, 0))
-        ttk.Button(scenery_btns, text="Random scenery", command=self._random_nature).pack(side="left")
-        ttk.Button(scenery_btns, text="Fetch fresh (online)", command=self._fetch_fresh_scenery).pack(
-            side="left", padx=(8, 0)
-        )
+        random_btn = ttk.Button(scenery_btns, text=i18n.t("bg.random"), command=self._random_nature)
+        random_btn.pack(side="left")
+        i18n.bind_widget(random_btn, "bg.random")
+        fetch_btn = ttk.Button(scenery_btns, text=i18n.t("bg.fetch_fresh"), command=self._fetch_fresh_scenery)
+        fetch_btn.pack(side="left", padx=(8, 0))
+        i18n.bind_widget(fetch_btn, "bg.fetch_fresh")
 
-        ttk.Radiobutton(
-            parent, text="Selected reciter photo", variable=self.background_mode, value="reciter",
+        reciter_rb = ttk.Radiobutton(
+            parent, text=i18n.t("bg.reciter"), variable=self.background_mode, value="reciter",
             command=self.update_preview,
-        ).pack(anchor="w", pady=(10, 0))
-        ttk.Radiobutton(
-            parent, text="Custom image", variable=self.background_mode, value="custom",
+        )
+        reciter_rb.pack(anchor="w", pady=(10, 0))
+        i18n.bind_widget(reciter_rb, "bg.reciter")
+        custom_rb = ttk.Radiobutton(
+            parent, text=i18n.t("bg.custom"), variable=self.background_mode, value="custom",
             command=self.update_preview,
-        ).pack(anchor="w", pady=(4, 0))
+        )
+        custom_rb.pack(anchor="w", pady=(4, 0))
+        i18n.bind_widget(custom_rb, "bg.custom")
         custom_row = ttk.Frame(parent, style="Panel.TFrame")
         custom_row.pack(fill="x", padx=(16, 0), pady=(4, 0))
         ttk.Entry(custom_row, textvariable=self.custom_background_var, width=22).pack(
             side="left", fill="x", expand=True
         )
-        ttk.Button(custom_row, text="Browse...", command=self._browse_custom_background).pack(
-            side="left", padx=(8, 0)
-        )
+        browse_bg_btn = ttk.Button(custom_row, text=i18n.t("btn.browse"), command=self._browse_custom_background)
+        browse_bg_btn.pack(side="left", padx=(8, 0))
+        i18n.bind_widget(browse_bg_btn, "btn.browse")
 
         overlay_row = ttk.Frame(parent, style="Panel.TFrame")
         overlay_row.pack(fill="x", pady=(14, 0))
-        ttk.Label(overlay_row, text="Dark overlay", style="Panel.TLabel").pack(side="left")
+        overlay_lbl = ttk.Label(overlay_row, text=i18n.t("bg.overlay"), style="Panel.TLabel")
+        overlay_lbl.pack(side="left")
+        i18n.bind_widget(overlay_lbl, "bg.overlay")
         ttk.Scale(
             overlay_row, from_=0.25, to=0.75, variable=self.overlay_var, orient="horizontal",
             command=lambda _v: self.schedule_preview(),
         ).pack(side="left", fill="x", expand=True, padx=(8, 0))
 
     def _build_layout_tab(self, parent) -> None:
-        ttk.Label(parent, text="Islamic Corner Banners", style="Panel.Heading.TLabel").pack(anchor="w")
-        ttk.Label(
+        banner_hdr = ttk.Label(parent, text=i18n.t("banner.title"), style="Panel.Heading.TLabel")
+        banner_hdr.pack(anchor="w")
+        i18n.bind_widget(banner_hdr, "banner.title")
+        banner_hint = ttk.Label(
             parent,
-            text="Click a banner to apply it. Gold = selected. Upload your own PNG with the button below.",
+            text=i18n.t("banner.hint"),
             style="Panel.Muted.TLabel",
             wraplength=360,
-        ).pack(anchor="w", pady=(2, 8))
+        )
+        banner_hint.pack(anchor="w", pady=(2, 8))
+        i18n.bind_widget(banner_hint, "banner.hint")
 
-        # Visual banner grid — populated in _refresh_banners
         self._banner_grid_frame = ttk.Frame(parent, style="Panel.TFrame")
         self._banner_grid_frame.pack(fill="x")
-        self._banner_thumb_refs: list[ImageTk.PhotoImage] = []  # prevent GC
+        self._banner_thumb_refs: list[ImageTk.PhotoImage] = []
 
-        ttk.Button(parent, text="Upload custom banner...", command=self._upload_custom_banner).pack(anchor="w", pady=(8, 0))
-
-        ttk.Separator(parent, orient="horizontal").pack(fill="x", pady=(12, 8))
-        ttk.Label(parent, text="Banner size", style="Panel.Heading.TLabel").pack(anchor="w", pady=(0, 4))
-        self._size_row(parent, "Corner size (% of frame)", self._banner_size_int_var(),
-                       10, 60, 2)
+        upload_btn = ttk.Button(parent, text=i18n.t("banner.upload"), command=self._upload_custom_banner)
+        upload_btn.pack(anchor="w", pady=(8, 0))
+        i18n.bind_widget(upload_btn, "banner.upload")
 
         ttk.Separator(parent, orient="horizontal").pack(fill="x", pady=(12, 8))
-        ttk.Label(parent, text="Text position fine-tuning", style="Panel.Heading.TLabel").pack(anchor="w")
+        size_hdr = ttk.Label(parent, text=i18n.t("banner.size"), style="Panel.Heading.TLabel")
+        size_hdr.pack(anchor="w", pady=(0, 4))
+        i18n.bind_widget(size_hdr, "banner.size")
+        self._size_row(parent, "banner.corner_size", self._banner_size_int_var(), 10, 60, 2)
+
+        ttk.Separator(parent, orient="horizontal").pack(fill="x", pady=(12, 8))
+        layout_hdr = ttk.Label(parent, text=i18n.t("layout.offset"), style="Panel.Heading.TLabel")
+        layout_hdr.pack(anchor="w")
+        i18n.bind_widget(layout_hdr, "layout.offset")
 
         offset_row = ttk.Frame(parent, style="Panel.TFrame")
         offset_row.pack(anchor="w", fill="x", pady=(6, 0))
-        ttk.Label(offset_row, text="X offset", style="Panel.TLabel", width=8).pack(side="left")
+        x_lbl = ttk.Label(offset_row, text=i18n.t("layout.x_offset"), style="Panel.TLabel", width=8)
+        x_lbl.pack(side="left")
+        i18n.bind_widget(x_lbl, "layout.x_offset")
         ttk.Spinbox(offset_row, from_=-520, to=520, textvariable=self.text_offset_x_var, width=7,
                     command=self._apply_offset_spinboxes).pack(side="left")
-        ttk.Label(offset_row, text="Y offset", style="Panel.TLabel", width=8).pack(side="left", padx=(10, 0))
+        y_lbl = ttk.Label(offset_row, text=i18n.t("layout.y_offset"), style="Panel.TLabel", width=8)
+        y_lbl.pack(side="left", padx=(10, 0))
+        i18n.bind_widget(y_lbl, "layout.y_offset")
         ttk.Spinbox(offset_row, from_=-120, to=420, textvariable=self.text_offset_y_var, width=7,
                     command=self._apply_offset_spinboxes).pack(side="left")
 
         actions = ttk.Frame(parent, style="Panel.TFrame")
         actions.pack(anchor="w", fill="x", pady=(8, 0))
-        ttk.Button(actions, text="Reset all", command=self._reset_layout).pack(side="left")
-        ttk.Button(actions, text="Center block", command=self._center_text).pack(side="left", padx=(8, 0))
-        ttk.Button(actions, text="Reset layers", command=self._reset_element_layers).pack(side="left", padx=(8, 0))
+        for key, cmd, pad in [
+            ("layout.reset_all", self._reset_layout, 0),
+            ("layout.center", self._center_text, 8),
+            ("layout.reset_layers", self._reset_element_layers, 8),
+        ]:
+            btn = ttk.Button(actions, text=i18n.t(key), command=cmd)
+            btn.pack(side="left", padx=(pad, 0))
+            i18n.bind_widget(btn, key)
 
     def _build_export_tab(self, parent) -> None:
-        ttk.Button(parent, text="Update Preview", command=self.update_preview).pack(anchor="w")
+        preview_btn = ttk.Button(parent, text=i18n.t("export.update_preview"), command=self.update_preview)
+        preview_btn.pack(anchor="w")
+        i18n.bind_widget(preview_btn, "export.update_preview")
 
         ttk.Separator(parent, orient="horizontal").pack(fill="x", pady=(10, 8))
-        ttk.Label(parent, text="Export quality", style="Panel.Heading.TLabel").pack(anchor="w")
+        quality_hdr = ttk.Label(parent, text=i18n.t("export.quality"), style="Panel.Heading.TLabel")
+        quality_hdr.pack(anchor="w")
+        i18n.bind_widget(quality_hdr, "export.quality")
         q_frame = ttk.Frame(parent, style="Panel.TFrame")
         q_frame.pack(anchor="w", pady=(6, 0))
-        for label, val in [("HD  1280×720", 1), ("Full HD  2560×1440", 2), ("4K  3840×2160", 3)]:
-            ttk.Radiobutton(q_frame, text=label, variable=self.export_scale_var, value=val).pack(anchor="w", pady=2)
-        ttk.Label(
+        for label_key, val in [
+            ("export.hd", 1), ("export.fhd", 2), ("export.4k", 3),
+        ]:
+            rb = ttk.Radiobutton(q_frame, text=i18n.t(label_key), variable=self.export_scale_var, value=val)
+            rb.pack(anchor="w", pady=2)
+            i18n.bind_widget(rb, label_key)
+        quality_hint = ttk.Label(
             parent,
-            text="Full HD and 4K render at higher DPI — crisp text, sharp badge edges, smooth banner corners.",
+            text=i18n.t("export.quality_hint"),
             style="Panel.Muted.TLabel",
             wraplength=350,
-        ).pack(anchor="w", pady=(4, 0))
+        )
+        quality_hint.pack(anchor="w", pady=(4, 0))
+        i18n.bind_widget(quality_hint, "export.quality_hint")
 
         ttk.Separator(parent, orient="horizontal").pack(fill="x", pady=(10, 8))
-        ttk.Button(parent, text="Export PNG", style="Accent.TButton", command=self.export_thumbnail).pack(anchor="w")
-        ttk.Button(parent, text="Batch Export...", command=self.batch_export).pack(anchor="w", pady=(8, 0))
+        export_btn = ttk.Button(parent, text=i18n.t("export.png"), style="Accent.TButton", command=self.export_thumbnail)
+        export_btn.pack(anchor="w")
+        i18n.bind_widget(export_btn, "export.png")
+        batch_btn = ttk.Button(parent, text=i18n.t("export.batch"), command=self.batch_export)
+        batch_btn.pack(anchor="w", pady=(8, 0))
+        i18n.bind_widget(batch_btn, "export.batch")
         ttk.Label(parent, textvariable=self.status_var, style="Panel.Muted.TLabel", wraplength=350).pack(anchor="w", pady=(16, 0))
 
     def _on_canvas_layout_change(self) -> None:
@@ -1133,8 +1328,10 @@ class ThumbnailApp(tk.Tk):
         self.update_preview()
 
 
-    def _field(self, parent, label: str, variable: tk.StringVar, width: int = 34, handler=None) -> None:
-        ttk.Label(parent, text=label, style="Panel.TLabel").pack(anchor="w", pady=(8, 0))
+    def _field(self, parent, label_key: str, variable: tk.StringVar, width: int = 34, handler=None) -> None:
+        lbl = ttk.Label(parent, text=i18n.t(label_key), style="Panel.TLabel")
+        lbl.pack(anchor="w", pady=(8, 0))
+        i18n.bind_widget(lbl, label_key)
         entry = ttk.Entry(parent, textvariable=variable, width=width)
         entry.pack(anchor="w")
         entry.bind("<KeyRelease>", handler or (lambda _e: self.update_preview()))
@@ -1229,7 +1426,7 @@ class ThumbnailApp(tk.Tk):
 
     def _upload_custom_banner(self) -> None:
         path = filedialog.askopenfilename(
-            title="Upload corner banner PNG",
+            title=i18n.t("dialog.banner.upload_title"),
             filetypes=[("PNG images", "*.png"), ("All images", "*.jpg *.jpeg *.png *.webp"), ("All files", "*.*")],
         )
         if not path:
@@ -1345,7 +1542,7 @@ class ThumbnailApp(tk.Tk):
 
     def _upload_custom_container(self) -> None:
         path = filedialog.askopenfilename(
-            title="Upload surah name container PNG",
+            title=i18n.t("dialog.container.upload_title"),
             filetypes=[("PNG images", "*.png"), ("All images", "*.jpg *.jpeg *.png *.webp"), ("All files", "*.*")],
         )
         if not path:
@@ -1362,10 +1559,10 @@ class ThumbnailApp(tk.Tk):
     def _quick_add_reciter_photo(self) -> None:
         reciter = self._selected_reciter()
         if not reciter:
-            messagebox.showwarning(APP_TITLE, "Select a reciter collection first.")
+            messagebox.showwarning(i18n.t("app.title"), i18n.t("msg.reciter.select_collection"))
             return
         path = filedialog.askopenfilename(
-            title="Add reciter photo",
+            title=i18n.t("dialog.reciter.photo_title"),
             filetypes=[("Images", "*.jpg *.jpeg *.png *.webp *.bmp"), ("All files", "*.*")],
         )
         if not path:
@@ -1394,7 +1591,7 @@ class ThumbnailApp(tk.Tk):
         self._syncing_surah = True
         self.surah_choice_var.set(surah_label(surah))
         self.arabic_var.set(surah.arabic)
-        self.english_var.set(surah.english)
+        self.english_var.set(i18n.surah_title(surah.number))
         self.number_var.set(str(surah.number))
         self._syncing_surah = False
         self.update_preview()
@@ -1418,11 +1615,23 @@ class ThumbnailApp(tk.Tk):
 
     def _refresh_reciter_options(self) -> None:
         self.reciters = reciter_store.load_reciters()
-        names = [reciter.name for reciter in self.reciters]
-        self.reciter_combo["values"] = names
-        if names and self.reciter_collection_var.get() not in names:
-            self.reciter_collection_var.set(names[0])
-            self.reciter_display_var.set(names[0])
+        current_id = self._current_reciter_id()
+        self._reciter_label_to_id = {}
+        labels: list[str] = []
+        for reciter in self.reciters:
+            label = i18n.reciter_name(reciter.id, reciter.name)
+            labels.append(label)
+            self._reciter_label_to_id[label] = reciter.id
+        self.reciter_combo["values"] = labels
+        if current_id:
+            match = next((r for r in self.reciters if r.id == current_id), None)
+            if match:
+                localized = i18n.reciter_name(match.id, match.name)
+                self.reciter_collection_var.set(localized)
+                self.reciter_display_var.set(localized)
+        elif labels:
+            self.reciter_collection_var.set(labels[0])
+            self.reciter_display_var.set(labels[0])
         self._refresh_reciter_photos()
 
     def _refresh_reciter_photos(self) -> None:
@@ -1527,7 +1736,13 @@ class ThumbnailApp(tk.Tk):
         self._nature_lookup = {lbl: p for lbl, _cat, p in filtered}
         self.nature_combo["values"] = labels
         count = len(labels)
-        self._bg_count_var.set(f"{count} image{'s' if count != 1 else ''} ({category})")
+        self._bg_count_var.set(
+            i18n.t(
+                "bg.count_one" if count == 1 else "bg.count",
+                count=count,
+                category=i18n.category_name(category),
+            )
+        )
         if labels and self.nature_background_var.get() not in labels:
             # Prefer a calm mountain scene as the default selection
             pref = next((l for l in labels if l.lower().startswith("mountain")), labels[0])
@@ -1582,7 +1797,7 @@ class ThumbnailApp(tk.Tk):
         prefix = prefix_map.get(category, "mountain")
         seed = random.randint(1, 9_999_999)
         dest = base_dir() / "assets" / "backgrounds" / f"{prefix}_fresh_{seed}.jpg"
-        self.status_var.set("Fetching fresh 4K scenery online…")
+        self.status_var.set(i18n.t("status.fetching_fresh"))
 
         def worker():
             # Picsum first (reliable clean 4K), then validated keyword attempts.
@@ -1609,7 +1824,7 @@ class ThumbnailApp(tk.Tk):
 
     def _on_fresh_fetched(self, ok: bool, dest: Path) -> None:
         if not ok:
-            self.status_var.set("Could not fetch fresh scenery — check your connection.")
+            self.status_var.set(i18n.t("status.fresh_fail"))
             return
         self._refresh_nature_backgrounds()
         label = self._stem_to_label(dest.stem)
@@ -1621,14 +1836,26 @@ class ThumbnailApp(tk.Tk):
         self.background_mode.set("nature")
         self._update_bg_preview()
         self.update_preview()
-        self.status_var.set("Fresh scenery added and applied.")
+        self.status_var.set(i18n.t("status.fresh_ok"))
 
     def _on_reciter_collection_changed(self, _event=None) -> None:
-        name = self.reciter_collection_var.get().strip()
-        if name:
-            self.reciter_display_var.set(name)
+        reciter = self._selected_reciter()
+        if reciter:
+            self.reciter_display_var.set(i18n.reciter_name(reciter.id, reciter.name))
         self._refresh_reciter_photos()
         self.update_preview()
+
+    def _current_reciter_id(self) -> str | None:
+        label = self.reciter_collection_var.get().strip()
+        rid = self._reciter_label_to_id.get(label)
+        if rid:
+            return rid
+        for reciter in self.reciters:
+            if reciter.name == label:
+                return reciter.id
+            if i18n.reciter_name(reciter.id, reciter.name) == label:
+                return reciter.id
+        return None
 
     def _open_reciter_manager(self) -> None:
         ReciterManagerDialog(self, on_change=self._on_reciters_changed)
@@ -1639,7 +1866,7 @@ class ThumbnailApp(tk.Tk):
 
     def _browse_custom_background(self) -> None:
         path = filedialog.askopenfilename(
-            title="Select custom background",
+            title=i18n.t("dialog.folder.background"),
             filetypes=[("Images", "*.jpg *.jpeg *.png *.webp *.bmp"), ("All files", "*.*")],
         )
         if path:
@@ -1652,8 +1879,10 @@ class ThumbnailApp(tk.Tk):
         return int(raw) if raw.isdigit() else 0
 
     def _selected_reciter(self) -> reciter_store.Reciter | None:
-        name = self.reciter_collection_var.get().strip()
-        return next((r for r in self.reciters if r.name == name), None)
+        rid = self._current_reciter_id()
+        if not rid:
+            return None
+        return next((r for r in self.reciters if r.id == rid), None)
 
     def _selected_reciter_photo_path(self) -> Path | None:
         reciter = self._selected_reciter()
@@ -1678,14 +1907,14 @@ class ThumbnailApp(tk.Tk):
             if path:
                 return path
             if warn:
-                messagebox.showwarning(APP_TITLE, "Add photos via Manage... first.")
+                messagebox.showwarning(i18n.t("app.title"), i18n.t("msg.reciter.add_photos_first"))
             return default_nature_background()
         if mode == "custom":
             custom = self.custom_background_var.get().strip()
             if custom and Path(custom).exists():
                 return Path(custom)
             if warn:
-                messagebox.showwarning(APP_TITLE, "Choose a valid custom background.")
+                messagebox.showwarning(i18n.t("app.title"), i18n.t("msg.bg.choose_valid"))
             return default_nature_background()
         return default_nature_background()
 
@@ -1770,18 +1999,16 @@ class ThumbnailApp(tk.Tk):
             image = generate_thumbnail(self._build_config(), _scale=preview_scale, layout_out=layout)
             self.preview_canvas.set_layout(layout)
             self.preview_canvas.show_image(image)
-            self.status_var.set(
-                "Preview — colored tabs (left) move individual layers · drag canvas = block · arrows = nudge"
-            )
+            self.status_var.set(i18n.t("status.preview"))
         except Exception as exc:
-            self.status_var.set(f"Preview error: {exc}")
+            self.status_var.set(i18n.t("status.preview_error", error=exc))
 
     def export_thumbnail(self) -> None:
         number = self._parse_surah_number()
         english = self.english_var.get().strip().replace(" ", "_") or "thumbnail"
         default_name = f"{number:03d}_{english}.png" if number else f"{english}.png"
         output = filedialog.asksaveasfilename(
-            title="Save thumbnail",
+            title=i18n.t("dialog.save_thumbnail"),
             defaultextension=".png",
             initialfile=default_name,
             filetypes=[("PNG image", "*.png")],
@@ -1790,17 +2017,118 @@ class ThumbnailApp(tk.Tk):
             return
         scale = int(self.export_scale_var.get())
         dims = {1: "1280×720", 2: "2560×1440", 3: "3840×2160"}.get(scale, "HD")
-        self.status_var.set(f"Exporting at {dims}…")
+        self.status_var.set(i18n.t("status.exporting", dims=dims))
         self.update_idletasks()
         try:
             save_thumbnail(self._build_config(warn=True), Path(output), export_scale=scale)
-            self.status_var.set(f"Saved {dims} PNG to {output}")
-            messagebox.showinfo(APP_TITLE, f"Thumbnail saved ({dims}):\n{output}")
+            self.status_var.set(i18n.t("status.saved", dims=dims, path=output))
+            messagebox.showinfo(i18n.t("app.title"), i18n.t("msg.export.saved", dims=dims, path=output))
         except Exception as exc:
-            messagebox.showerror(APP_TITLE, f"Could not save thumbnail:\n{exc}")
+            messagebox.showerror(i18n.t("app.title"), i18n.t("msg.export.failed", error=exc))
 
     def batch_export(self) -> None:
         BatchExportDialog(self, self._build_config, int(self.export_scale_var.get()))
+
+    def _language_display_name(self) -> str:
+        for code, name_en, native in i18n.language_choices():
+            if code == i18n.get_language():
+                return f"{native} ({name_en})"
+        return i18n.get_language()
+
+    def _change_language(self) -> None:
+        code = ask_language(self, initial=i18n.get_language())
+        if not code or code == i18n.get_language():
+            return
+        self._language_was_chosen = True
+        i18n.set_language(code)
+        self._apply_language()
+        self.update_preview()
+        try:
+            settings_store.save_settings(self._settings_snapshot())
+        except Exception:
+            pass
+
+    def _apply_language(self) -> None:
+        self.title(i18n.t("app.title"))
+        if hasattr(self, "_titlebar_label"):
+            self._titlebar_label.configure(text=i18n.t("app.title"))
+        i18n.apply_bindings()
+        if hasattr(self, "_notebook") and self._tab_keys:
+            for idx, key in enumerate(self._tab_keys):
+                self._notebook.tab(idx, text=i18n.t(key))
+        if hasattr(self, "_preview_frame"):
+            self._preview_frame.configure(text=i18n.t("preview.frame"))
+        self._refresh_surah_combo()
+        num = self._parse_surah_number()
+        if num:
+            self.english_var.set(i18n.surah_title(num))
+        self._refresh_reciter_options()
+        for cat, btn in self._bg_category_buttons.items():
+            btn.configure(text=i18n.category_name(cat))
+        if hasattr(self, "_language_display"):
+            self._language_display.set(self._language_display_name())
+        if hasattr(self, "bg_category_var"):
+            self._apply_bg_category(self.bg_category_var.get())
+        self.status_var.set(i18n.t("status.ready"))
+
+    def _refresh_surah_combo(self) -> None:
+        current = self._parse_surah_number()
+        self.surah_combo["values"] = [surah_label(s) for s in SURAHS]
+        if current:
+            surah = get_surah(current)
+            if surah:
+                self._syncing_surah = True
+                self.surah_choice_var.set(surah_label(surah))
+                self._syncing_surah = False
+
+
+def _focus_existing_instance() -> bool:
+    """Bring an already-running window to the front."""
+    if not sys.platform.startswith("win"):
+        return False
+    try:
+        import ctypes
+        from ctypes import wintypes
+
+        user32 = ctypes.windll.user32
+        found: list[int] = []
+
+        @ctypes.WINFUNCTYPE(ctypes.c_bool, wintypes.HWND, wintypes.LPARAM)
+        def callback(hwnd, _lparam):
+            if not user32.IsWindowVisible(hwnd):
+                return True
+            buf = ctypes.create_unicode_buffer(256)
+            user32.GetWindowTextW(hwnd, buf, 256)
+            if "Quran Thumbnail Generator" in buf.value:
+                found.append(hwnd)
+            return True
+
+        user32.EnumWindows(callback, 0)
+        if not found:
+            return False
+        hwnd = found[0]
+        user32.ShowWindow(hwnd, 9)  # SW_RESTORE
+        user32.SetForegroundWindow(hwnd)
+        return True
+    except Exception:
+        return False
+
+
+def _acquire_single_instance() -> bool:
+    """Return False when another copy is already running (and focus it)."""
+    if not sys.platform.startswith("win"):
+        return True
+    try:
+        import ctypes
+
+        kernel32 = ctypes.windll.kernel32
+        mutex = kernel32.CreateMutexW(None, True, "Local\\ArthurVlade.QuranThumbnailGenerator")
+        if kernel32.GetLastError() == 183:  # ERROR_ALREADY_EXISTS
+            _focus_existing_instance()
+            return False
+        return True
+    except Exception:
+        return True
 
 
 def _set_app_user_model_id() -> None:
@@ -1816,13 +2144,57 @@ def _set_app_user_model_id() -> None:
         pass
 
 
+def _write_crash_log() -> None:
+    import os
+    import traceback
+
+    try:
+        log_path = base_dir() / "data" / "crash.log"
+        log_path.parent.mkdir(parents=True, exist_ok=True)
+        header = f"cwd={os.getcwd()}\nargv={sys.argv}\n\n"
+        log_path.write_text(header + traceback.format_exc(), encoding="utf-8")
+    except OSError:
+        pass
+
+
+def _install_excepthook() -> None:
+    """Log uncaught errors (including Tk callback failures) to data/crash.log."""
+    def _hook(exc_type, exc, tb):
+        if exc_type is KeyboardInterrupt:
+            sys.__excepthook__(exc_type, exc, tb)
+            return
+        try:
+            import traceback
+            log_path = base_dir() / "data" / "crash.log"
+            log_path.parent.mkdir(parents=True, exist_ok=True)
+            header = f"cwd={os.getcwd()}\nargv={sys.argv}\n\n"
+            log_path.write_text(header + "".join(traceback.format_exception(exc_type, exc, tb)), encoding="utf-8")
+        except OSError:
+            pass
+        sys.__excepthook__(exc_type, exc, tb)
+
+    sys.excepthook = _hook
+
+
 def main() -> None:
+    os.chdir(Path(__file__).resolve().parent)
+    _install_excepthook()
+    if not _acquire_single_instance():
+        return
     _set_app_user_model_id()
     ensure_initialized()
+    saved = settings_store.load_settings()
+    lang = saved.get("language") or "en"
+    i18n.set_language(str(lang))
     app = ThumbnailApp()
+    app._language_display.set(app._language_display_name())
     app._maybe_download_first_run_assets()
     app.mainloop()
 
 
 if __name__ == "__main__":
-    main()
+    try:
+        main()
+    except Exception:
+        _write_crash_log()
+        raise

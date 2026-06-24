@@ -11,6 +11,7 @@ from PIL import Image, ImageDraw, ImageEnhance, ImageFont, ImageOps
 
 from surah_svg import render_surah_svg
 from name_containers import compose_name_block, fit_container, load_container
+from script_fonts import font_factory_for_text, shape_text
 
 
 THUMB_WIDTH = 1280
@@ -464,18 +465,22 @@ def generate_thumbnail(
         )
         block_w, block_h = name_block.size
 
-    english = config.english_surah.strip().upper()
+    english = shape_text(config.english_surah)
     title_font = title_h = None
     if english:
-        title_font, tb = _fit_text(draw, english, _title_font, max_text_width,
-                                   config.title_size * s, 20 * s)
+        title_font, tb = _fit_text(
+            draw, english, font_factory_for_text(config.english_surah, role="title"),
+            max_text_width, config.title_size * s, 20 * s,
+        )
         title_h = tb[3] - tb[1]
 
-    reciter = config.reciter_name.strip()
+    reciter = shape_text(config.reciter_name)
     rec_font = rec_h = None
     if reciter:
-        rec_font, rb = _fit_text(draw, reciter.upper(), _subtitle_font, max_text_width,
-                                 config.reciter_size * s, 18 * s)
+        rec_font, rb = _fit_text(
+            draw, reciter, font_factory_for_text(config.reciter_name, role="subtitle"),
+            max_text_width, config.reciter_size * s, 18 * s,
+        )
         rec_h = rb[3] - rb[1]
 
     show_badge = config.surah_number > 0
@@ -518,7 +523,7 @@ def generate_thumbnail(
     if reciter and rec_font is not None:
         rec_cx = base_cx + config.reciter_offset_x * s
         rec_y  = rec_top + config.reciter_offset_y * s
-        _draw_centered_line(draw, rec_cx, rec_y, reciter.upper(),
+        _draw_centered_line(draw, rec_cx, rec_y, reciter,
                             rec_font, config.reciter_color, config.text_glow, s)
 
     # ── Surah badge ───────────────────────────────────────────────────────────

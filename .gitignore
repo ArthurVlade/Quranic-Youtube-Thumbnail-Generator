@@ -5,9 +5,16 @@ __pycache__/
 # Large, regenerable background library (run setup_backgrounds.py to populate)
 assets/backgrounds/
 .venv/
-data/reciter_images/
-data/reciters.json
-data/settings.json
+# Locale generation cache (dev only)
+locales/_auto_cache.json
+
+# Large script fonts (downloaded by setup_fonts.py / first-run)
+assets/fonts/NotoSansSC-Variable.ttf
+assets/fonts/NotoSansJP-Variable.ttf
+assets/fonts/NotoSansKR-Variable.ttf
+
+# Local user data / diagnostics
+data/
 
 # Build artifacts
 build/
