@@ -36,24 +36,10 @@ from text_fonts import (
     title_font_label,
 )
 from ui_theme import (
-    ACCENT,
-    ACCENT_HOVER,
-    ACCENT_TEXT,
-    BG_DARK,
-    BG_ELEV,
-    BG_INPUT,
-    BG_PANEL,
-    BORDER,
-    CLOSE_HOVER,
-    CTRL_HOVER,
-    FG_MUTED,
-    FG_PRIMARY,
     FONT_HEADING,
     LightGradientBackdrop,
     SegmentedControl,
     SegmentedTabView,
-    TITLEBAR_BG,
-    TITLEBAR_FG,
     apply_theme,
     get_theme_mode,
     palette,
@@ -81,17 +67,17 @@ class ColorPickerRow(ttk.Frame):
         *,
         i18n_key: str | None = None,
     ) -> None:
-        super().__init__(master, style="Panel.TFrame")
+        super().__init__(master, style="ControlBar.TFrame", padding=(8, 5))
         self.on_change = on_change
         self.color_var = tk.StringVar(value=initial)
-        lbl = ttk.Label(self, text=label, style="Panel.TLabel", width=16)
+        lbl = ttk.Label(self, text=label, style="ControlBar.TLabel", width=16)
         lbl.pack(side="left")
         if i18n_key:
             i18n.bind_widget(lbl, i18n_key)
         self.swatch = tk.Label(self, width=3, relief="flat", bd=0, cursor="hand2")
         self.swatch.pack(side="left", padx=(0, 8))
         self.swatch.bind("<Button-1>", lambda _e: self.pick())
-        self.value_label = ttk.Label(self, textvariable=self.color_var, style="Panel.TLabel")
+        self.value_label = ttk.Label(self, textvariable=self.color_var, style="ControlBar.TLabel")
         self.value_label.pack(side="left")
         self._refresh_swatch()
 
@@ -212,7 +198,7 @@ class ReciterManagerDialog(tk.Toplevel):
         self.resizable(False, False)
         self.transient(master)
         self.grab_set()
-        self.configure(bg=BG_DARK)
+        self.configure(bg=palette().bg_dark)
         self.on_change = on_change
         self.selected_reciter_id: str | None = None
         self.selected_photo_id: str | None = None
@@ -548,7 +534,8 @@ class ThumbnailApp(tk.Tk):
     # ── custom title bar ─────────────────────────────────────────────────────
 
     def _build_titlebar(self) -> None:
-        bar = tk.Frame(self, bg=TITLEBAR_BG, height=40)
+        p = palette()
+        bar = tk.Frame(self, bg=p.titlebar_bg, height=40)
         bar.pack(fill="x", side="top")
         bar.pack_propagate(False)
         self._titlebar = bar
@@ -558,21 +545,21 @@ class ThumbnailApp(tk.Tk):
             if getattr(self, "_icon_image", None) is not None:
                 factor = max(1, self._icon_image.width() // 22)
                 self._tb_icon = self._icon_image.subsample(factor, factor)
-                tk.Label(bar, image=self._tb_icon, bg=TITLEBAR_BG).pack(side="left", padx=(12, 8))
+                tk.Label(bar, image=self._tb_icon, bg=p.titlebar_bg).pack(side="left", padx=(12, 8))
         except tk.TclError:
             pass
 
-        title = tk.Label(bar, text=i18n.t("app.title"), bg=TITLEBAR_BG, fg=TITLEBAR_FG,
+        title = tk.Label(bar, text=i18n.t("app.title"), bg=p.titlebar_bg, fg=p.titlebar_fg,
                          font=(FONT_HEADING, 10))
         title.pack(side="left", pady=8)
         self._titlebar_label = title
 
         # Window control buttons (right side, inset when maximized on Win11)
-        self._tb_controls = tk.Frame(bar, bg=TITLEBAR_BG)
+        self._tb_controls = tk.Frame(bar, bg=p.titlebar_bg)
         self._tb_controls.pack(side="right", fill="y")
-        self._tb_close = self._tb_button(self._tb_controls, "\u2715", self._on_close, hover=CLOSE_HOVER, hover_fg="#ffffff")
-        self._tb_max = self._tb_button(self._tb_controls, "\u25A1", self._toggle_maximize, hover=CTRL_HOVER)
-        self._tb_min = self._tb_button(self._tb_controls, "\u2014", self._minimize, hover=CTRL_HOVER)
+        self._tb_close = self._tb_button(self._tb_controls, "\u2715", self._on_close, hover_kind="close")
+        self._tb_max = self._tb_button(self._tb_controls, "\u25A1", self._toggle_maximize, hover_kind="ctrl")
+        self._tb_min = self._tb_button(self._tb_controls, "\u2014", self._minimize, hover_kind="ctrl")
         self._sync_titlebar_insets()
 
         # Dragging
@@ -581,17 +568,21 @@ class ThumbnailApp(tk.Tk):
             widget.bind("<B1-Motion>", self._tb_drag)
             widget.bind("<Double-Button-1>", lambda _e: self._toggle_maximize())
 
-    def _tb_button(self, parent, glyph, command, hover, hover_fg=None):
-        btn = tk.Label(parent, text=glyph, bg=TITLEBAR_BG, fg=FG_MUTED,
+    def _tb_button(self, parent, glyph, command, *, hover_kind: str = "ctrl"):
+        p = palette()
+        btn = tk.Label(parent, text=glyph, bg=p.titlebar_bg, fg=p.fg_muted,
                        font=("Segoe UI", 11), width=4, height=1, cursor="hand2")
         btn.pack(side="right", fill="y")
-        normal_fg = FG_MUTED
 
         def on_enter(_e):
-            btn.configure(bg=hover, fg=hover_fg or FG_PRIMARY)
+            tp = palette()
+            hover = tp.close_hover if hover_kind == "close" else tp.ctrl_hover
+            hover_fg = "#ffffff" if hover_kind == "close" else tp.fg_primary
+            btn.configure(bg=hover, fg=hover_fg)
 
         def on_leave(_e):
-            btn.configure(bg=TITLEBAR_BG, fg=normal_fg)
+            tp = palette()
+            btn.configure(bg=tp.titlebar_bg, fg=tp.fg_muted)
 
         btn.bind("<Enter>", on_enter)
         btn.bind("<Leave>", on_leave)
@@ -705,6 +696,8 @@ class ThumbnailApp(tk.Tk):
             if hasattr(self, "_banner_size_int"):
                 self._banner_size_int.set(int(self.banner_size_var.get() * 100))
             self.overlay_var.set(float(s.get("overlay", self.overlay_var.get())))
+            if hasattr(self, "_overlay_pct"):
+                self._overlay_pct.set(int(self.overlay_var.get() * 100))
             self.svg_height_var.set(int(s.get("svg_height", self.svg_height_var.get())))
             self.title_size_var.set(int(s.get("title_size", self.title_size_var.get())))
             self.reciter_size_var.set(int(s.get("reciter_size", self.reciter_size_var.get())))
@@ -947,31 +940,35 @@ class ThumbnailApp(tk.Tk):
 
     def _build_style_tab(self, parent) -> None:
         # ── Colors ──────────────────────────────────────────────────────────
-        colors_hdr = ttk.Label(parent, text=i18n.t("style.colors"), style="Panel.Heading.TLabel")
-        colors_hdr.pack(anchor="w", pady=(0, 6))
-        i18n.bind_widget(colors_hdr, "style.colors")
+        colors_frame = ttk.LabelFrame(parent, text=i18n.t("style.colors"), padding=8)
+        colors_frame.pack(fill="x", pady=(0, 4))
+        i18n.bind_widget(colors_frame, "style.colors")
         self.arabic_color = ColorPickerRow(
-            parent, i18n.t("color.arabic"), "#ffffff", self.update_preview, i18n_key="color.arabic",
+            colors_frame, i18n.t("color.arabic"), "#ffffff", self.update_preview, i18n_key="color.arabic",
         )
         self.arabic_color.pack(anchor="w", fill="x", pady=(0, 4))
         self.english_color = ColorPickerRow(
-            parent, i18n.t("color.english"), "#ffffff", self.update_preview, i18n_key="color.english",
+            colors_frame, i18n.t("color.english"), "#ffffff", self.update_preview, i18n_key="color.english",
         )
         self.english_color.pack(anchor="w", fill="x", pady=(0, 4))
         self.reciter_color = ColorPickerRow(
-            parent, i18n.t("color.reciter"), "#ffffff", self.update_preview, i18n_key="color.reciter",
+            colors_frame, i18n.t("color.reciter"), "#ffffff", self.update_preview, i18n_key="color.reciter",
         )
         self.reciter_color.pack(anchor="w", fill="x", pady=(0, 4))
         self.badge_text_color = ColorPickerRow(
-            parent, i18n.t("color.badge_text"), "#ffffff", self.update_preview, i18n_key="color.badge_text",
+            colors_frame, i18n.t("color.badge_text"), "#ffffff", self.update_preview, i18n_key="color.badge_text",
         )
         self.badge_text_color.pack(anchor="w", fill="x", pady=(0, 4))
         self.badge_accent_color = ColorPickerRow(
-            parent, i18n.t("color.badge_accent"), "#d4af37", self.update_preview, i18n_key="color.badge_accent",
+            colors_frame, i18n.t("color.badge_accent"), "#d4af37", self.update_preview, i18n_key="color.badge_accent",
         )
         self.badge_accent_color.pack(anchor="w", fill="x", pady=(0, 4))
         glow = ttk.Checkbutton(
-            parent, text=i18n.t("color.soft_glow"), variable=self.text_glow_var, command=self.update_preview,
+            colors_frame,
+            text=i18n.t("color.soft_glow"),
+            variable=self.text_glow_var,
+            command=self.update_preview,
+            style="Group.TCheckbutton",
         )
         glow.pack(anchor="w", pady=(4, 0))
         i18n.bind_widget(glow, "color.soft_glow")
@@ -982,36 +979,31 @@ class ThumbnailApp(tk.Tk):
         ttk.Separator(parent, orient="horizontal").pack(fill="x", pady=(12, 8))
 
         # ── Typography sizes ─────────────────────────────────────────────────
-        typo_hdr = ttk.Label(parent, text=i18n.t("style.typography"), style="Panel.Heading.TLabel")
-        typo_hdr.pack(anchor="w", pady=(0, 8))
-        i18n.bind_widget(typo_hdr, "style.typography")
-        self._size_row(parent, "size.arabic_svg", self.svg_height_var, 80, 500, 5)
-        self._size_row(parent, "size.english_title", self.title_size_var, 20, 90, 2)
-        self._size_row(parent, "size.reciter", self.reciter_size_var, 16, 70, 2)
-        self._size_row(parent, "size.badge", self.badge_size_var, 14, 52, 2)
+        typo_frame = ttk.LabelFrame(parent, text=i18n.t("style.typography"), padding=8)
+        typo_frame.pack(fill="x", pady=(0, 4))
+        i18n.bind_widget(typo_frame, "style.typography")
+        self._size_row(typo_frame, "size.arabic_svg", self.svg_height_var, 80, 500, 5)
+        self._size_row(typo_frame, "size.english_title", self.title_size_var, 20, 90, 2)
+        self._size_row(typo_frame, "size.reciter", self.reciter_size_var, 16, 70, 2)
+        self._size_row(typo_frame, "size.badge", self.badge_size_var, 14, 52, 2)
 
         ttk.Separator(parent, orient="horizontal").pack(fill="x", pady=(12, 8))
-        container_hdr = ttk.Label(parent, text=i18n.t("style.container"), style="Panel.Heading.TLabel")
-        container_hdr.pack(anchor="w", pady=(0, 4))
-        i18n.bind_widget(container_hdr, "style.container")
+        container_frame = ttk.LabelFrame(parent, text=i18n.t("style.container"), padding=8)
+        container_frame.pack(fill="x", pady=(0, 4))
+        i18n.bind_widget(container_frame, "style.container")
         container_hint = ttk.Label(
-            parent,
+            container_frame,
             text=i18n.t("style.container_hint"),
-            style="Panel.Muted.TLabel",
-            wraplength=360,
+            style="Muted.TLabel",
+            wraplength=340,
         )
         container_hint.pack(anchor="w", pady=(0, 6))
         i18n.bind_widget(container_hint, "style.container_hint")
 
-        self._container_grid_frame = ttk.Frame(parent, style="Panel.TFrame")
+        self._container_grid_frame = ttk.Frame(container_frame, style="Panel.TFrame")
         self._container_grid_frame.pack(fill="x")
         self._container_thumb_refs: list[ImageTk.PhotoImage] = []
 
-        container_scale_row = ttk.Frame(parent, style="Panel.TFrame")
-        container_scale_row.pack(fill="x", pady=(6, 0))
-        opacity_lbl = ttk.Label(container_scale_row, text=i18n.t("style.container_opacity"), style="Panel.TLabel", width=20)
-        opacity_lbl.pack(side="left")
-        i18n.bind_widget(opacity_lbl, "style.container_opacity")
         self._container_opacity_pct = tk.IntVar(value=88)
 
         def _container_opacity_update(*_):
@@ -1019,18 +1011,15 @@ class ThumbnailApp(tk.Tk):
             self.schedule_preview()
 
         self._container_opacity_pct.trace_add("write", _container_opacity_update)
-        ttk.Scale(
-            container_scale_row, from_=30, to=100, variable=self._container_opacity_pct,
-            orient="horizontal",
+        self._bar_scale_row(
+            container_frame,
+            "style.container_opacity",
+            self._container_opacity_pct,
+            30,
+            100,
             command=lambda _v: self.schedule_preview(),
-        ).pack(side="left", fill="x", expand=True, padx=(6, 6))
-        ttk.Label(container_scale_row, textvariable=self._container_opacity_pct, style="Panel.TLabel", width=4).pack(side="right")
+        )
 
-        container_height_row = ttk.Frame(parent, style="Panel.TFrame")
-        container_height_row.pack(fill="x", pady=(6, 0))
-        height_lbl = ttk.Label(container_height_row, text=i18n.t("style.container_height"), style="Panel.TLabel", width=20)
-        height_lbl.pack(side="left")
-        i18n.bind_widget(height_lbl, "style.container_height")
         self._container_height_pct = tk.IntVar(value=100)
 
         def _container_height_update(*_):
@@ -1038,18 +1027,15 @@ class ThumbnailApp(tk.Tk):
             self.schedule_preview()
 
         self._container_height_pct.trace_add("write", _container_height_update)
-        ttk.Scale(
-            container_height_row, from_=70, to=160, variable=self._container_height_pct,
-            orient="horizontal",
+        self._bar_scale_row(
+            container_frame,
+            "style.container_height",
+            self._container_height_pct,
+            70,
+            160,
             command=lambda _v: self.schedule_preview(),
-        ).pack(side="left", fill="x", expand=True, padx=(6, 6))
-        ttk.Label(container_height_row, textvariable=self._container_height_pct, style="Panel.TLabel", width=4).pack(side="right")
+        )
 
-        container_width_row = ttk.Frame(parent, style="Panel.TFrame")
-        container_width_row.pack(fill="x", pady=(6, 0))
-        width_lbl = ttk.Label(container_width_row, text=i18n.t("style.container_width"), style="Panel.TLabel", width=20)
-        width_lbl.pack(side="left")
-        i18n.bind_widget(width_lbl, "style.container_width")
         self._container_width_pct = tk.IntVar(value=100)
 
         def _container_width_update(*_):
@@ -1057,23 +1043,25 @@ class ThumbnailApp(tk.Tk):
             self.schedule_preview()
 
         self._container_width_pct.trace_add("write", _container_width_update)
-        ttk.Scale(
-            container_width_row, from_=70, to=160, variable=self._container_width_pct,
-            orient="horizontal",
+        self._bar_scale_row(
+            container_frame,
+            "style.container_width",
+            self._container_width_pct,
+            70,
+            160,
             command=lambda _v: self.schedule_preview(),
-        ).pack(side="left", fill="x", expand=True, padx=(6, 6))
-        ttk.Label(container_width_row, textvariable=self._container_width_pct, style="Panel.TLabel", width=4).pack(side="right")
+        )
 
         preview_hint = ttk.Label(
-            parent,
+            container_frame,
             text=i18n.t("style.container_preview_hint"),
-            style="Panel.Muted.TLabel",
-            wraplength=360,
+            style="Muted.TLabel",
+            wraplength=340,
         )
         preview_hint.pack(anchor="w", pady=(6, 0))
         i18n.bind_widget(preview_hint, "style.container_preview_hint")
 
-        upload_btn = ttk.Button(parent, text=i18n.t("style.upload_container"), command=self._upload_custom_container)
+        upload_btn = ttk.Button(container_frame, text=i18n.t("style.upload_container"), command=self._upload_custom_container)
         upload_btn.pack(anchor="w", pady=(8, 0))
         i18n.bind_widget(upload_btn, "style.upload_container")
 
@@ -1114,7 +1102,7 @@ class ThumbnailApp(tk.Tk):
         fonts_hint = ttk.Label(
             frame,
             text=i18n.t("style.fonts_hint"),
-            style="Panel.Muted.TLabel",
+            style="Muted.TLabel",
             wraplength=340,
         )
         fonts_hint.pack(anchor="w", pady=(4, 0))
@@ -1129,9 +1117,9 @@ class ThumbnailApp(tk.Tk):
         lookup: dict[str, str],
         on_change,
     ) -> None:
-        row = ttk.Frame(parent, style="Panel.TFrame")
+        row = ttk.Frame(parent, style="ControlBar.TFrame", padding=(8, 5))
         row.pack(fill="x", pady=(0, 8))
-        lbl = ttk.Label(row, text=i18n.t(label_key), style="Panel.TLabel", width=18)
+        lbl = ttk.Label(row, text=i18n.t(label_key), style="ControlBar.TLabel", width=18)
         lbl.pack(side="left", anchor="n")
         i18n.bind_widget(lbl, label_key)
         combo = ttk.Combobox(row, textvariable=var, state="readonly", width=36)
@@ -1186,18 +1174,55 @@ class ThumbnailApp(tk.Tk):
     def _on_reciter_font_changed(self, _event=None) -> None:
         self.schedule_preview()
 
-    def _size_row(self, parent, label_key: str, var: tk.IntVar, lo: int, hi: int, step: int) -> None:
-        row = ttk.Frame(parent, style="Panel.TFrame")
+    def _bar_scale_row(
+        self,
+        parent,
+        label_key: str,
+        var: tk.Variable,
+        lo: float,
+        hi: float,
+        *,
+        step: int | None = None,
+        command=None,
+        label_width: int = 20,
+        value_width: int = 4,
+    ) -> None:
+        row = ttk.Frame(parent, style="ControlBar.TFrame", padding=(8, 5))
         row.pack(fill="x", pady=(0, 6))
-        lbl = ttk.Label(row, text=i18n.t(label_key), style="Panel.TLabel", width=20)
+        lbl = ttk.Label(row, text=i18n.t(label_key), style="ControlBar.TLabel", width=label_width)
         lbl.pack(side="left")
         i18n.bind_widget(lbl, label_key)
-        val_lbl = ttk.Label(row, textvariable=var, style="Panel.TLabel", width=4)
+        val_lbl = ttk.Label(row, textvariable=var, style="ControlBar.TLabel", width=value_width)
         val_lbl.pack(side="right")
+
+        def _on_scale(_v):
+            if step:
+                var.set(round(float(var.get()) / step) * step)
+            if command:
+                command(_v)
+            elif hasattr(self, "schedule_preview"):
+                self.schedule_preview()
+
         ttk.Scale(
-            row, from_=lo, to=hi, variable=var, orient="horizontal",
-            command=lambda _v: [var.set(round(var.get() / step) * step), self.schedule_preview()],
+            row,
+            from_=lo,
+            to=hi,
+            variable=var,
+            orient="horizontal",
+            style="ControlBar.Horizontal.TScale",
+            command=_on_scale,
         ).pack(side="left", fill="x", expand=True, padx=(6, 6))
+
+    def _size_row(self, parent, label_key: str, var: tk.IntVar, lo: int, hi: int, step: int) -> None:
+        self._bar_scale_row(
+            parent,
+            label_key,
+            var,
+            lo,
+            hi,
+            step=step,
+            command=lambda _v: self.schedule_preview(),
+        )
 
     def _build_reciter_tab(self, parent) -> None:
         coll_lbl = ttk.Label(parent, text=i18n.t("reciter.collection"), style="Panel.TLabel")
@@ -1263,7 +1288,7 @@ class ThumbnailApp(tk.Tk):
         self.nature_combo.pack(side="left", fill="x", expand=True)
         self.nature_combo.bind("<<ComboboxSelected>>", lambda _e: self._on_nature_selected())
 
-        self._bg_preview_label = tk.Label(nature_row, bd=1, relief="flat", bg=BG_INPUT)
+        self._bg_preview_label = tk.Label(nature_row, bd=1, relief="flat", bg=palette().bg_input)
         self._bg_preview_label.pack(side="left", padx=(8, 0))
         self._bg_thumb_ref: ImageTk.PhotoImage | None = None
 
@@ -1302,42 +1327,48 @@ class ThumbnailApp(tk.Tk):
         browse_bg_btn.pack(side="left", padx=(8, 0))
         i18n.bind_widget(browse_bg_btn, "btn.browse")
 
-        overlay_row = ttk.Frame(parent, style="Panel.TFrame")
-        overlay_row.pack(fill="x", pady=(14, 0))
-        overlay_lbl = ttk.Label(overlay_row, text=i18n.t("bg.overlay"), style="Panel.TLabel")
-        overlay_lbl.pack(side="left")
-        i18n.bind_widget(overlay_lbl, "bg.overlay")
-        ttk.Scale(
-            overlay_row, from_=0.25, to=0.75, variable=self.overlay_var, orient="horizontal",
+        self._overlay_pct = tk.IntVar(value=int(self.overlay_var.get() * 100))
+
+        def _overlay_update(*_):
+            self.overlay_var.set(self._overlay_pct.get() / 100)
+            self.schedule_preview()
+
+        self._overlay_pct.trace_add("write", _overlay_update)
+        self._bar_scale_row(
+            parent,
+            "bg.overlay",
+            self._overlay_pct,
+            25,
+            75,
             command=lambda _v: self.schedule_preview(),
-        ).pack(side="left", fill="x", expand=True, padx=(8, 0))
+        )
 
     def _build_layout_tab(self, parent) -> None:
-        banner_hdr = ttk.Label(parent, text=i18n.t("banner.title"), style="Panel.Heading.TLabel")
-        banner_hdr.pack(anchor="w")
-        i18n.bind_widget(banner_hdr, "banner.title")
+        banner_frame = ttk.LabelFrame(parent, text=i18n.t("banner.title"), padding=8)
+        banner_frame.pack(fill="x", pady=(0, 4))
+        i18n.bind_widget(banner_frame, "banner.title")
         banner_hint = ttk.Label(
-            parent,
+            banner_frame,
             text=i18n.t("banner.hint"),
-            style="Panel.Muted.TLabel",
-            wraplength=360,
+            style="Muted.TLabel",
+            wraplength=340,
         )
-        banner_hint.pack(anchor="w", pady=(2, 8))
+        banner_hint.pack(anchor="w", pady=(0, 8))
         i18n.bind_widget(banner_hint, "banner.hint")
 
-        self._banner_grid_frame = ttk.Frame(parent, style="Panel.TFrame")
+        self._banner_grid_frame = ttk.Frame(banner_frame, style="Panel.TFrame")
         self._banner_grid_frame.pack(fill="x")
         self._banner_thumb_refs: list[ImageTk.PhotoImage] = []
 
-        upload_btn = ttk.Button(parent, text=i18n.t("banner.upload"), command=self._upload_custom_banner)
+        upload_btn = ttk.Button(banner_frame, text=i18n.t("banner.upload"), command=self._upload_custom_banner)
         upload_btn.pack(anchor="w", pady=(8, 0))
         i18n.bind_widget(upload_btn, "banner.upload")
 
         ttk.Separator(parent, orient="horizontal").pack(fill="x", pady=(12, 8))
-        size_hdr = ttk.Label(parent, text=i18n.t("banner.size"), style="Panel.Heading.TLabel")
-        size_hdr.pack(anchor="w", pady=(0, 4))
-        i18n.bind_widget(size_hdr, "banner.size")
-        self._size_row(parent, "banner.corner_size", self._banner_size_int_var(), 10, 60, 2)
+        size_frame = ttk.LabelFrame(parent, text=i18n.t("banner.size"), padding=8)
+        size_frame.pack(fill="x", pady=(0, 4))
+        i18n.bind_widget(size_frame, "banner.size")
+        self._size_row(size_frame, "banner.corner_size", self._banner_size_int_var(), 10, 60, 2)
 
         ttk.Separator(parent, orient="horizontal").pack(fill="x", pady=(12, 8))
         layout_hdr = ttk.Label(parent, text=i18n.t("layout.offset"), style="Panel.Heading.TLabel")
@@ -1465,27 +1496,33 @@ class ThumbnailApp(tk.Tk):
         self._build_banner_grid()
         self._on_banner_selected()
 
+    def _picker_caption_style(self, selected: bool) -> tuple[str, str]:
+        p = palette()
+        return p.bg_panel, (p.accent if selected else p.fg_primary)
+
     def _refresh_picker_grid_theme(self) -> None:
         """Update banner/container tile chrome without reloading images."""
         p = palette()
         current_banner = self.banner_var.get()
         for item in self._banner_grid_chrome:
             selected = item["key"] == current_banner
-            border = ACCENT if selected else p.grid_border
+            border = p.accent if selected else p.grid_border
             item["btn_frame"].configure(bg=border)
             if item.get("image_btn"):
                 item["image_btn"].configure(bg=border)
-            item["caption"].configure(bg=BG_PANEL, fg=ACCENT if selected else p.grid_muted)
+            bg, fg = self._picker_caption_style(selected)
+            item["caption"].configure(bg=bg, fg=fg)
 
         current_container = self.name_container_var.get()
         for item in self._container_grid_chrome:
             selected = item["key"] == current_container
-            border = ACCENT if selected else p.grid_border
+            border = p.accent if selected else p.grid_border
             item["btn_frame"].configure(bg=border)
             if item.get("image_btn"):
                 item["image_btn"].configure(bg=border)
             if item.get("caption"):
-                item["caption"].configure(bg=BG_PANEL, fg=ACCENT if selected else p.grid_muted)
+                bg, fg = self._picker_caption_style(selected)
+                item["caption"].configure(bg=bg, fg=fg)
 
     def _build_banner_grid(self) -> None:
         frame = self._banner_grid_frame
@@ -1529,7 +1566,7 @@ class ThumbnailApp(tk.Tk):
 
             selected = (label == current_label)
             p = palette()
-            border_color = ACCENT if selected else p.grid_border
+            border_color = p.accent if selected else p.grid_border
 
             btn_frame = tk.Frame(cell, bg=border_color, bd=0)
             btn_frame.pack()
@@ -1556,9 +1593,16 @@ class ThumbnailApp(tk.Tk):
             btn.bind("<Button-1>", lambda _e, lbl=label: self._select_banner(lbl))
 
             short = label if len(label) <= 14 else label[:13] + "…"
-            lbl_widget = tk.Label(cell, text=short, font=("Segoe UI", 7),
-                                  bg=BG_PANEL,
-                                  fg=ACCENT if selected else p.grid_muted, wraplength=THUMB, justify="center")
+            cap_bg, cap_fg = self._picker_caption_style(selected)
+            lbl_widget = tk.Label(
+                cell,
+                text=short,
+                font=("Segoe UI", 8),
+                bg=cap_bg,
+                fg=cap_fg,
+                wraplength=THUMB,
+                justify="center",
+            )
             lbl_widget.pack()
             self._banner_grid_chrome.append({
                 "key": label,
@@ -1570,7 +1614,7 @@ class ThumbnailApp(tk.Tk):
     def _select_banner(self, label: str) -> None:
         self.banner_var.set(label)
         self._on_banner_selected()
-        self._build_banner_grid()
+        self._refresh_picker_grid_theme()
 
     def _on_banner_selected(self, _event=None) -> None:
         label = self.banner_var.get()
@@ -1654,7 +1698,7 @@ class ThumbnailApp(tk.Tk):
 
             selected = label == current
             p = palette()
-            border = ACCENT if selected else p.grid_border
+            border = p.accent if selected else p.grid_border
             btn_frame = tk.Frame(cell, bg=border, bd=0)
             btn_frame.pack()
             btn = None
@@ -1665,8 +1709,16 @@ class ThumbnailApp(tk.Tk):
             target = btn if btn is not None else btn_frame
             target.bind("<Button-1>", lambda _e, lbl=label: self._select_name_container(lbl))
             short = label if len(label) <= 22 else label[:21] + "…"
-            caption = tk.Label(cell, text=short, font=("Segoe UI", 7), bg=BG_PANEL,
-                               fg=ACCENT if selected else p.grid_muted, wraplength=TW + 20, justify="center")
+            cap_bg, cap_fg = self._picker_caption_style(selected)
+            caption = tk.Label(
+                cell,
+                text=short,
+                font=("Segoe UI", 8),
+                bg=cap_bg,
+                fg=cap_fg,
+                wraplength=TW + 20,
+                justify="center",
+            )
             caption.pack()
             self._container_grid_chrome.append({
                 "key": label,
@@ -1678,7 +1730,7 @@ class ThumbnailApp(tk.Tk):
     def _select_name_container(self, label: str) -> None:
         self.name_container_var.set(label)
         self._on_name_container_selected()
-        self._build_container_grid()
+        self._refresh_picker_grid_theme()
 
     def _on_name_container_selected(self, _event=None) -> None:
         label = self.name_container_var.get()
@@ -2279,13 +2331,14 @@ class ThumbnailApp(tk.Tk):
             pass
 
     def _apply_ui_theme(self) -> None:
+        p = palette()
         apply_theme(self, get_theme_mode())
         if hasattr(self, "_light_backdrop"):
             self._light_backdrop.refresh()
         if hasattr(self, "_left_card"):
-            self._left_card.configure(bg=BORDER)
+            self._left_card.configure(bg=p.border)
         if hasattr(self, "_preview_card"):
-            self._preview_card.configure(bg=BORDER)
+            self._preview_card.configure(bg=p.border)
         self._refresh_titlebar_theme()
         if hasattr(self, "_tab_view") and self._tab_view:
             self._tab_view.refresh_theme()
@@ -2293,9 +2346,9 @@ class ThumbnailApp(tk.Tk):
         if hasattr(self, "_bg_segment") and self._bg_segment:
             self._bg_segment.refresh_theme()
         if hasattr(self, "preview_canvas"):
-            self.preview_canvas.configure(bg=BG_INPUT)
+            self.preview_canvas.configure(bg=p.bg_input)
         if hasattr(self, "_bg_preview_label"):
-            self._bg_preview_label.configure(bg=BG_INPUT)
+            self._bg_preview_label.configure(bg=p.bg_input)
         if hasattr(self, "_theme_btn"):
             self._theme_btn.configure(text=self._theme_button_label())
         if self._banner_grid_chrome or self._container_grid_chrome:
@@ -2304,18 +2357,19 @@ class ThumbnailApp(tk.Tk):
     def _refresh_titlebar_theme(self) -> None:
         if not hasattr(self, "_titlebar"):
             return
+        p = palette()
         for widget in (self._titlebar, getattr(self, "_tb_controls", None), getattr(self, "_titlebar_label", None)):
             if widget is None:
                 continue
             try:
-                widget.configure(bg=TITLEBAR_BG)
+                widget.configure(bg=p.titlebar_bg)
             except tk.TclError:
                 pass
         if hasattr(self, "_titlebar_label"):
-            self._titlebar_label.configure(fg=TITLEBAR_FG)
+            self._titlebar_label.configure(fg=p.titlebar_fg)
         for btn in (getattr(self, "_tb_min", None), getattr(self, "_tb_max", None), getattr(self, "_tb_close", None)):
             if btn is not None:
-                btn.configure(bg=TITLEBAR_BG, fg=FG_MUTED)
+                btn.configure(bg=p.titlebar_bg, fg=p.fg_muted)
 
 
 def _focus_existing_instance() -> bool:

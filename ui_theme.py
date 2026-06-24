@@ -228,9 +228,9 @@ def apply_theme(root: tk.Misc, mode: str | None = None) -> ttk.Style:
     style.configure("Panel.Heading.TLabel", background=p.bg_panel, foreground=p.fg_primary, font=(FONT_HEADING, 11))
 
     style.configure("TLabelframe", background=p.bg_dark, foreground=p.fg_primary, bordercolor=p.border)
-    style.configure("TLabelframe.Label", background=p.bg_dark, foreground=p.fg_muted)
+    style.configure("TLabelframe.Label", background=p.bg_dark, foreground=p.fg_primary, font=(FONT_HEADING, 10))
     style.configure("Panel.TLabelframe", background=p.bg_panel, foreground=p.fg_primary, bordercolor=p.border)
-    style.configure("Panel.TLabelframe.Label", background=p.bg_panel, foreground=p.fg_muted)
+    style.configure("Panel.TLabelframe.Label", background=p.bg_panel, foreground=p.fg_primary, font=(FONT_HEADING, 10))
     style.configure("Dark.TLabelframe", background=p.bg_panel, foreground=p.fg_primary, bordercolor=p.border)
     style.configure("Dark.TLabelframe.Label", background=p.bg_panel, foreground=p.fg_muted, font=(FONT, 9))
 
@@ -333,9 +333,51 @@ def apply_theme(root: tk.Misc, mode: str | None = None) -> ttk.Style:
         indicatorcolor=[("selected", p.accent)],
         foreground=[("active", p.fg_primary)],
     )
+    style.configure(
+        "Group.TCheckbutton",
+        background=p.bg_dark,
+        foreground=p.fg_primary,
+        indicatorcolor=p.bg_input,
+        focuscolor=p.bg_dark,
+    )
+    style.map(
+        "Group.TCheckbutton",
+        indicatorcolor=[("selected", p.accent)],
+        foreground=[("active", p.fg_primary)],
+    )
 
-    style.configure("TScale", background=p.bg_panel, troughcolor=p.bg_input, bordercolor=p.bg_panel)
-    style.configure("Horizontal.TScale", background=p.bg_panel, troughcolor=p.bg_input)
+    style.configure("ControlBar.TFrame", background=p.bg_input)
+    style.configure("ControlBar.TLabel", background=p.bg_input, foreground=p.fg_primary)
+    style.configure("ControlBar.Muted.TLabel", background=p.bg_input, foreground=p.fg_muted)
+
+    style.configure(
+        "TScale",
+        background=p.bg_panel,
+        troughcolor=p.bg_elev,
+        bordercolor=p.border,
+        lightcolor=p.bg_elev,
+        darkcolor=p.border,
+    )
+    style.configure(
+        "Horizontal.TScale",
+        background=p.bg_panel,
+        troughcolor=p.bg_elev,
+        bordercolor=p.border,
+        lightcolor=p.bg_elev,
+        darkcolor=p.border,
+    )
+    style.configure(
+        "ControlBar.Horizontal.TScale",
+        background=p.bg_input,
+        troughcolor=p.bg_elev,
+        bordercolor=p.border,
+        lightcolor=p.bg_elev,
+        darkcolor=p.border,
+    )
+    style.map(
+        "ControlBar.Horizontal.TScale",
+        background=[("active", p.bg_input)],
+    )
     style.configure("TProgressbar", background=p.accent, troughcolor=p.bg_input, bordercolor=p.bg_input)
 
     style.configure(

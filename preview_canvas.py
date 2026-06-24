@@ -8,7 +8,7 @@ from typing import Callable, Literal
 
 from PIL import Image, ImageTk
 
-from ui_theme import BG_INPUT
+from ui_theme import palette
 
 PREVIEW_W = 640
 PREVIEW_H = 360
@@ -46,7 +46,7 @@ class InteractivePreviewCanvas(tk.Canvas):
             master,
             width=PREVIEW_W,
             height=PREVIEW_H,
-            bg=BG_INPUT,
+            bg=palette().bg_input,
             highlightthickness=0,
             cursor="fleur",
         )

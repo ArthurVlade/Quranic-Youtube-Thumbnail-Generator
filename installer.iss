@@ -5,7 +5,7 @@
 ; ============================================================
 
 #define MyAppName "Quran Thumbnail Generator"
-#define MyAppVersion "1.3.0"
+#define MyAppVersion "1.3.1"
 #define MyAppPublisher "ArthurVlade"
 #define MyAppURL "https://github.com/ArthurVlade/Quranic-Youtube-Thumbnail-Generator"
 #define MyAppExeName "QuranThumbnailGenerator.exe"
