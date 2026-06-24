@@ -37,18 +37,29 @@ from text_fonts import (
 )
 from ui_theme import (
     ACCENT,
+    ACCENT_HOVER,
+    ACCENT_TEXT,
     BG_DARK,
+    BG_ELEV,
     BG_INPUT,
     BG_PANEL,
+    BORDER,
     CLOSE_HOVER,
     CTRL_HOVER,
     FG_MUTED,
     FG_PRIMARY,
     FONT_HEADING,
+    LightGradientBackdrop,
+    SegmentedControl,
+    SegmentedTabView,
     TITLEBAR_BG,
     TITLEBAR_FG,
     apply_theme,
+    get_theme_mode,
+    palette,
+    set_theme_mode,
     style_listbox,
+    toggle_theme_mode,
 )
 
 PREVIEW_WIDTH = 640
@@ -394,13 +405,15 @@ class ThumbnailApp(tk.Tk):
         self.title(i18n.t("app.title"))
         self.geometry("1280x820+80+40")
         self.minsize(1120, 720)
-        apply_theme(self)
+        self._saved_settings = settings_store.load_settings()
+        apply_theme(self, self._saved_settings.get("ui_theme", "dark"))
         self._set_window_icon()
 
         self.reciters = reciter_store.load_reciters()
-        self._saved_settings = settings_store.load_settings()
         self._reciter_label_to_id: dict[str, str] = {}
-        self._bg_category_buttons: dict[str, tk.Button] = {}
+        self._bg_segment: SegmentedControl | None = None
+        self._tab_view: SegmentedTabView | None = None
+        self._scroll_canvases: list[tk.Canvas] = []
         self._tab_keys: list[str] = []
         self._syncing_surah = False
         self._preview_job: str | None = None
@@ -454,6 +467,10 @@ class ThumbnailApp(tk.Tk):
 
         self._syncing_offsets = False
 
+        if self._custom_chrome:
+            self._build_titlebar()
+        self._light_backdrop = LightGradientBackdrop(self)
+        self._light_backdrop.mount()
         self._build_ui()
         self.text_offset_x_var.trace_add("write", lambda *_: self._apply_offset_spinboxes())
         self.text_offset_y_var.trace_add("write", lambda *_: self._apply_offset_spinboxes())
@@ -462,6 +479,7 @@ class ThumbnailApp(tk.Tk):
         self._refresh_banners()
         self._refresh_name_containers()
         self._restore_settings()
+        self._apply_ui_theme()
         self._bind_shortcuts()
         self.protocol("WM_DELETE_WINDOW", self._on_close)
         self._ui_ready = True
@@ -666,6 +684,7 @@ class ThumbnailApp(tk.Tk):
             "badge_accent_color": self.badge_accent_color.color_var.get(),
             "reciter_collection": self.reciter_collection_var.get(),
             "language": i18n.get_language(),
+            "ui_theme": get_theme_mode(),
             "language_chosen": bool(
                 getattr(self, "_language_was_chosen", False)
                 or self._saved_settings.get("language_chosen", False)
@@ -691,6 +710,9 @@ class ThumbnailApp(tk.Tk):
             if hasattr(self, "title_font_combo"):
                 self._set_title_font(s.get("title_font", "cinzel"))
                 self._set_reciter_font(s.get("reciter_font", "cormorant_garamond"))
+            theme = s.get("ui_theme")
+            if theme in {"dark", "light"}:
+                set_theme_mode(theme)
             for picker, key in [
                 (self.arabic_color, "arabic_color"),
                 (self.english_color, "english_color"),
@@ -789,16 +811,17 @@ class ThumbnailApp(tk.Tk):
         start_background_download(on_progress, on_done)
 
     def _build_ui(self) -> None:
-        if self._custom_chrome:
-            self._build_titlebar()
-
-        outer = ttk.Frame(self, padding=12)
+        outer = ttk.Frame(self._light_backdrop.inner, padding=10, style="Gutter.TFrame")
         outer.pack(fill="both", expand=True)
         outer.columnconfigure(1, weight=1)
         outer.rowconfigure(0, weight=1)
+        self._outer = outer
 
-        left_shell = ttk.Frame(outer, style="Panel.TFrame", padding=0)
-        left_shell.grid(row=0, column=0, sticky="nsw", padx=(0, 12))
+        p = palette()
+        self._left_card = tk.Frame(outer, bg=p.border, highlightthickness=0, bd=0)
+        self._left_card.grid(row=0, column=0, sticky="nsw", padx=(0, 10))
+        left_shell = ttk.Frame(self._left_card, style="Panel.TFrame", padding=0)
+        left_shell.pack(fill="both", expand=True, padx=1, pady=1)
         left_shell.configure(width=400)
 
         header = ttk.Frame(left_shell, style="Panel.TFrame", padding=(12, 12, 12, 4))
@@ -816,28 +839,31 @@ class ThumbnailApp(tk.Tk):
         i18n.bind_widget(hint, "header.hint")
         self._build_language_bar(header)
 
-        notebook = ttk.Notebook(left_shell)
+        notebook = SegmentedTabView(left_shell)
         notebook.pack(fill="both", expand=True, padx=8, pady=(0, 8))
-        self._notebook = notebook
+        self._tab_view = notebook
+        self._scroll_canvases = notebook.scroll_canvases
         self._tab_keys = [
             "tab.surah", "tab.style", "tab.reciter", "tab.background", "tab.banners", "tab.export",
         ]
 
-        self._build_surah_tab(self._add_scroll_tab(notebook, "tab.surah"))
-        self._build_style_tab(self._add_scroll_tab(notebook, "tab.style"))
-        self._build_reciter_tab(self._add_scroll_tab(notebook, "tab.reciter"))
-        self._build_background_tab(self._add_scroll_tab(notebook, "tab.background"))
-        self._build_layout_tab(self._add_scroll_tab(notebook, "tab.banners"))
-        self._build_export_tab(self._add_scroll_tab(notebook, "tab.export"))
+        self._build_surah_tab(notebook.add_tab("tab.surah", i18n.t("tab.surah")))
+        self._build_style_tab(notebook.add_tab("tab.style", i18n.t("tab.style")))
+        self._build_reciter_tab(notebook.add_tab("tab.reciter", i18n.t("tab.reciter")))
+        self._build_background_tab(notebook.add_tab("tab.background", i18n.t("tab.background")))
+        self._build_layout_tab(notebook.add_tab("tab.banners", i18n.t("tab.banners")))
+        self._build_export_tab(notebook.add_tab("tab.export", i18n.t("tab.export")))
 
+        self._preview_card = tk.Frame(outer, bg=p.border, highlightthickness=0, bd=0)
+        self._preview_card.grid(row=0, column=1, sticky="nsew")
         preview_frame = ttk.LabelFrame(
-            outer,
+            self._preview_card,
             text=i18n.t("preview.frame"),
             style="Dark.TLabelframe",
             padding=8,
         )
+        preview_frame.pack(fill="both", expand=True, padx=1, pady=1)
         i18n.bind_widget(preview_frame, "preview.frame")
-        preview_frame.grid(row=0, column=1, sticky="nsew")
         preview_frame.rowconfigure(0, weight=1)
         preview_frame.columnconfigure(0, weight=1)
         self._preview_frame = preview_frame
@@ -868,39 +894,16 @@ class ThumbnailApp(tk.Tk):
         change_btn.pack(side="right")
         i18n.bind_widget(change_btn, "language.change_btn")
 
+        self._theme_btn = ttk.Button(
+            lang_frame,
+            text=self._theme_button_label(),
+            style="Ghost.TButton",
+            command=self._toggle_theme,
+        )
+        self._theme_btn.pack(side="right", padx=(0, 8))
+        i18n.bind_widget(self._theme_btn, self._theme_button_i18n_key())
+
         self._language_display.set(self._language_display_name())
-
-    def _add_scroll_tab(self, notebook, tab_key: str):
-        """Add a notebook tab whose content scrolls, with an auto-hiding scrollbar."""
-        container = ttk.Frame(notebook, style="Panel.TFrame")
-        canvas = tk.Canvas(container, bg=BG_PANEL, highlightthickness=0, borderwidth=0)
-        vbar = ttk.Scrollbar(container, orient="vertical", command=canvas.yview)
-        inner = ttk.Frame(canvas, style="Panel.TFrame", padding=10)
-        win = canvas.create_window((0, 0), window=inner, anchor="nw")
-        canvas.configure(yscrollcommand=vbar.set)
-        canvas.pack(side="left", fill="both", expand=True)
-
-        def _sync(_e=None):
-            canvas.configure(scrollregion=canvas.bbox("all"))
-            need = inner.winfo_reqheight() > canvas.winfo_height()
-            if need and not vbar.winfo_ismapped():
-                vbar.pack(side="right", fill="y")
-            elif not need and vbar.winfo_ismapped():
-                vbar.pack_forget()
-                canvas.yview_moveto(0)
-
-        inner.bind("<Configure>", _sync)
-        canvas.bind("<Configure>", lambda e: (canvas.itemconfigure(win, width=e.width), _sync()))
-
-        def _wheel(e):
-            if vbar.winfo_ismapped():
-                canvas.yview_scroll(int(-e.delta / 120), "units")
-
-        canvas.bind("<Enter>", lambda _e: canvas.bind_all("<MouseWheel>", _wheel))
-        canvas.bind("<Leave>", lambda _e: canvas.unbind_all("<MouseWheel>"))
-
-        notebook.add(container, text=i18n.t(tab_key))
-        return inner
 
     def _on_preview_frame_resize(self, event) -> None:
         avail_w = event.width - 24
@@ -1237,20 +1240,18 @@ class ThumbnailApp(tk.Tk):
         nature_rb.pack(anchor="w")
         i18n.bind_widget(nature_rb, "bg.nature")
 
-        # Category filter bar
+        # Category filter — Apple segmented control
         self.bg_category_var = tk.StringVar(value="All")
-        cat_frame = ttk.Frame(parent, style="Panel.TFrame")
-        cat_frame.pack(fill="x", padx=(16, 0), pady=(4, 2))
-        self._bg_category_buttons.clear()
-        for cat in ("All", "Forests", "Mountains", "Lakes", "Springs", "Other"):
-            btn = tk.Button(
-                cat_frame, text=i18n.category_name(cat), font=("Segoe UI", 8),
-                bg="#1e2129", fg="#aaaaaa", activebackground="#d4af37",
-                relief="flat", bd=0, padx=6, pady=2, cursor="hand2",
-                command=lambda c=cat: self._filter_backgrounds(c),
-            )
-            btn.pack(side="left", padx=(0, 4))
-            self._bg_category_buttons[cat] = btn
+        cats = ("All", "Forests", "Mountains", "Lakes", "Springs", "Other")
+        self._bg_segment = SegmentedControl(
+            parent,
+            on_select=self._filter_backgrounds,
+        )
+        self._bg_segment.pack(fill="x", padx=(16, 0), pady=(4, 6))
+        self._bg_segment.set_options(
+            [(c, i18n.category_name(c)) for c in cats],
+            active="All",
+        )
 
         nature_row = ttk.Frame(parent, style="Panel.TFrame")
         nature_row.pack(fill="x", padx=(16, 0), pady=(2, 0))
@@ -1260,7 +1261,7 @@ class ThumbnailApp(tk.Tk):
         self.nature_combo.pack(side="left", fill="x", expand=True)
         self.nature_combo.bind("<<ComboboxSelected>>", lambda _e: self._on_nature_selected())
 
-        self._bg_preview_label = tk.Label(nature_row, bd=1, relief="flat", bg="#1a1d23")
+        self._bg_preview_label = tk.Label(nature_row, bd=1, relief="flat", bg=BG_INPUT)
         self._bg_preview_label.pack(side="left", padx=(8, 0))
         self._bg_thumb_ref: ImageTk.PhotoImage | None = None
 
@@ -1483,23 +1484,27 @@ class ThumbnailApp(tk.Tk):
             try:
                 if path and path.exists():
                     img = Image.open(path).convert("RGBA")
-                    # White bg for transparent PNGs
-                    bg = Image.new("RGB", img.size, (30, 30, 35))
+                    p = palette()
+                    tile_bg = p.bg_input if get_theme_mode() == "light" else (30, 30, 35)
+                    bg = Image.new("RGB", img.size, tile_bg)
                     bg.paste(img, mask=img.split()[3])
                     bg.thumbnail((THUMB, THUMB), Image.Resampling.LANCZOS)
                     photo = ImageTk.PhotoImage(bg)
                 else:
-                    # "None" tile — dark grey square
-                    none_img = Image.new("RGB", (THUMB, THUMB), (40, 40, 45))
+                    p = palette()
+                    none_rgb = (229, 229, 234) if get_theme_mode() == "light" else (40, 40, 45)
+                    line_rgb = (174, 174, 178) if get_theme_mode() == "light" else (80, 80, 80)
+                    none_img = Image.new("RGB", (THUMB, THUMB), none_rgb)
                     from PIL import ImageDraw as _ID
-                    _ID.Draw(none_img).line([(8, 8), (THUMB-8, THUMB-8)], fill=(80, 80, 80), width=2)
-                    _ID.Draw(none_img).line([(THUMB-8, 8), (8, THUMB-8)], fill=(80, 80, 80), width=2)
+                    _ID.Draw(none_img).line([(8, 8), (THUMB - 8, THUMB - 8)], fill=line_rgb, width=2)
+                    _ID.Draw(none_img).line([(THUMB - 8, 8), (8, THUMB - 8)], fill=line_rgb, width=2)
                     photo = ImageTk.PhotoImage(none_img)
             except Exception:
                 photo = None
 
             selected = (label == current_label)
-            border_color = "#d4af37" if selected else "#333344"
+            p = palette()
+            border_color = ACCENT if selected else p.grid_border
 
             btn_frame = tk.Frame(cell, bg=border_color, bd=0)
             btn_frame.pack()
@@ -1510,16 +1515,25 @@ class ThumbnailApp(tk.Tk):
                                relief="flat", bg=border_color, padx=2, pady=2)
                 btn.pack()
             else:
-                btn = tk.Label(btn_frame, text="?", width=6, height=4, bg="#2a2a30",
-                               fg="#888", cursor="hand2", bd=0)
+                p = palette()
+                btn = tk.Label(
+                    btn_frame,
+                    text="?",
+                    width=6,
+                    height=4,
+                    bg=p.bg_input,
+                    fg=p.grid_muted,
+                    cursor="hand2",
+                    bd=0,
+                )
                 btn.pack()
 
             btn.bind("<Button-1>", lambda _e, lbl=label: self._select_banner(lbl))
 
             short = label if len(label) <= 14 else label[:13] + "…"
             lbl_widget = tk.Label(cell, text=short, font=("Segoe UI", 7),
-                                  bg=frame.winfo_rgb("Panel.TFrame") if False else "#1a1d23",
-                                  fg="#d4af37" if selected else "#888888", wraplength=THUMB, justify="center")
+                                  bg=BG_PANEL,
+                                  fg=ACCENT if selected else p.grid_muted, wraplength=THUMB, justify="center")
             lbl_widget.pack()
 
     def _select_banner(self, label: str) -> None:
@@ -1584,24 +1598,31 @@ class ThumbnailApp(tk.Tk):
             try:
                 if path and path.exists():
                     img = Image.open(path).convert("RGBA")
-                    bg = Image.new("RGB", (TW, TH), (30, 30, 35))
+                    p = palette()
+                    tile_bg = p.bg_input if get_theme_mode() == "light" else (30, 30, 35)
+                    bg = Image.new("RGB", (TW, TH), tile_bg)
                     img.thumbnail((TW - 4, TH - 4), Image.Resampling.LANCZOS)
                     ox = (TW - img.width) // 2
                     oy = (TH - img.height) // 2
                     bg.paste(img, (ox, oy), img)
                     photo = ImageTk.PhotoImage(bg)
                 else:
-                    none_img = Image.new("RGB", (TW, TH), (40, 40, 45))
+                    p = palette()
+                    none_rgb = (229, 229, 234) if get_theme_mode() == "light" else (40, 40, 45)
+                    line_rgb = (174, 174, 178) if get_theme_mode() == "light" else (80, 80, 80)
+                    text_rgb = (142, 142, 147) if get_theme_mode() == "light" else (120, 120, 120)
+                    none_img = Image.new("RGB", (TW, TH), none_rgb)
                     from PIL import ImageDraw as _ID
                     d = _ID.Draw(none_img)
-                    d.line([(6, TH // 2), (TW - 6, TH // 2)], fill=(80, 80, 80), width=2)
-                    d.text((TW // 2 - 12, TH // 2 - 8), "None", fill=(120, 120, 120))
+                    d.line([(6, TH // 2), (TW - 6, TH // 2)], fill=line_rgb, width=2)
+                    d.text((TW // 2 - 12, TH // 2 - 8), "None", fill=text_rgb)
                     photo = ImageTk.PhotoImage(none_img)
             except Exception:
                 photo = None
 
             selected = label == current
-            border = "#d4af37" if selected else "#333344"
+            p = palette()
+            border = ACCENT if selected else p.grid_border
             btn_frame = tk.Frame(cell, bg=border, bd=0)
             btn_frame.pack()
             if photo:
@@ -1610,8 +1631,8 @@ class ThumbnailApp(tk.Tk):
                 btn.pack()
             btn.bind("<Button-1>", lambda _e, lbl=label: self._select_name_container(lbl))
             short = label if len(label) <= 22 else label[:21] + "…"
-            tk.Label(cell, text=short, font=("Segoe UI", 7), bg="#1a1d23",
-                     fg="#d4af37" if selected else "#888888", wraplength=TW + 20, justify="center").pack()
+            tk.Label(cell, text=short, font=("Segoe UI", 7), bg=BG_PANEL,
+                     fg=ACCENT if selected else p.grid_muted, wraplength=TW + 20, justify="center").pack()
 
     def _select_name_container(self, label: str) -> None:
         self.name_container_var.set(label)
@@ -1836,6 +1857,8 @@ class ThumbnailApp(tk.Tk):
 
     def _filter_backgrounds(self, category: str) -> None:
         self.bg_category_var.set(category)
+        if self._bg_segment is not None:
+            self._bg_segment.set_active(category)
         self._apply_bg_category(category)
 
     def _apply_bg_category(self, category: str) -> None:
@@ -2168,10 +2191,12 @@ class ThumbnailApp(tk.Tk):
         self.title(i18n.t("app.title"))
         if hasattr(self, "_titlebar_label"):
             self._titlebar_label.configure(text=i18n.t("app.title"))
+        if hasattr(self, "_theme_btn"):
+            self._theme_btn.configure(text=self._theme_button_label())
+            i18n.bind_widget(self._theme_btn, self._theme_button_i18n_key())
         i18n.apply_bindings()
-        if hasattr(self, "_notebook") and self._tab_keys:
-            for idx, key in enumerate(self._tab_keys):
-                self._notebook.tab(idx, text=i18n.t(key))
+        if hasattr(self, "_tab_view") and self._tab_view and self._tab_keys:
+            self._tab_view.refresh_labels(lambda key: i18n.t(key))
         if hasattr(self, "_preview_frame"):
             self._preview_frame.configure(text=i18n.t("preview.frame"))
         self._refresh_surah_combo()
@@ -2179,8 +2204,9 @@ class ThumbnailApp(tk.Tk):
         if num:
             self.english_var.set(i18n.surah_title(num))
         self._refresh_reciter_options()
-        for cat, btn in self._bg_category_buttons.items():
-            btn.configure(text=i18n.category_name(cat))
+        if hasattr(self, "_bg_segment") and self._bg_segment:
+            self._bg_segment.refresh_labels(i18n.category_name)
+            self._bg_segment.refresh_theme()
         if hasattr(self, "_language_display"):
             self._language_display.set(self._language_display_name())
         if hasattr(self, "bg_category_var"):
@@ -2196,6 +2222,62 @@ class ThumbnailApp(tk.Tk):
                 self._syncing_surah = True
                 self.surah_choice_var.set(surah_label(surah))
                 self._syncing_surah = False
+
+    def _theme_button_i18n_key(self) -> str:
+        return "theme.switch_light" if get_theme_mode() == "dark" else "theme.switch_dark"
+
+    def _theme_button_label(self) -> str:
+        return i18n.t(self._theme_button_i18n_key())
+
+    def _toggle_theme(self) -> None:
+        toggle_theme_mode()
+        self._apply_ui_theme()
+        try:
+            settings_store.save_settings(self._settings_snapshot())
+        except Exception:
+            pass
+
+    def _apply_ui_theme(self) -> None:
+        apply_theme(self, get_theme_mode())
+        if hasattr(self, "_light_backdrop"):
+            self._light_backdrop.refresh()
+            self.after(150, self._light_backdrop.refresh)
+        if hasattr(self, "_left_card"):
+            self._left_card.configure(bg=BORDER)
+        if hasattr(self, "_preview_card"):
+            self._preview_card.configure(bg=BORDER)
+        self._refresh_titlebar_theme()
+        if hasattr(self, "_tab_view") and self._tab_view:
+            self._tab_view.refresh_theme()
+            self._scroll_canvases = self._tab_view.scroll_canvases
+        if hasattr(self, "_bg_segment") and self._bg_segment:
+            self._bg_segment.refresh_theme()
+        if hasattr(self, "preview_canvas"):
+            self.preview_canvas.configure(bg=BG_INPUT)
+        if hasattr(self, "_bg_preview_label"):
+            self._bg_preview_label.configure(bg=BG_INPUT)
+        if hasattr(self, "_theme_btn"):
+            self._theme_btn.configure(text=self._theme_button_label())
+        if hasattr(self, "_banner_grid_frame") and self._banner_grid_frame.winfo_children():
+            self._build_banner_grid()
+        if hasattr(self, "_container_grid_frame") and self._container_grid_frame.winfo_children():
+            self._build_container_grid()
+
+    def _refresh_titlebar_theme(self) -> None:
+        if not hasattr(self, "_titlebar"):
+            return
+        for widget in (self._titlebar, getattr(self, "_tb_controls", None), getattr(self, "_titlebar_label", None)):
+            if widget is None:
+                continue
+            try:
+                widget.configure(bg=TITLEBAR_BG)
+            except tk.TclError:
+                pass
+        if hasattr(self, "_titlebar_label"):
+            self._titlebar_label.configure(fg=TITLEBAR_FG)
+        for btn in (getattr(self, "_tb_min", None), getattr(self, "_tb_max", None), getattr(self, "_tb_close", None)):
+            if btn is not None:
+                btn.configure(bg=TITLEBAR_BG, fg=FG_MUTED)
 
 
 def _focus_existing_instance() -> bool:

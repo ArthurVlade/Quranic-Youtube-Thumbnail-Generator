@@ -156,10 +156,8 @@ def _load_font(filename: str, size: int, weight: int | None = None) -> ImageFont
         return ImageFont.load_default()
     font = ImageFont.truetype(str(path), size=size)
     if weight is not None:
-        try:
-            font.set_variation_by_axes([weight])
-        except (AttributeError, OSError, ValueError):
-            pass
+        from text_fonts import apply_font_weight
+        apply_font_weight(font, weight)
     return font
 
 
@@ -170,10 +168,8 @@ def _find_font(candidates: list[str], size: int, weight: int | None = None) -> I
             if path.exists():
                 font = ImageFont.truetype(str(path), size=size)
                 if weight is not None:
-                    try:
-                        font.set_variation_by_axes([weight])
-                    except (AttributeError, OSError, ValueError):
-                        pass
+                    from text_fonts import apply_font_weight
+                    apply_font_weight(font, weight)
                 return font
     for name in candidates:
         for ext in (".ttf", ".otf", ".TTF", ".OTF"):

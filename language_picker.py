@@ -6,7 +6,7 @@ import tkinter as tk
 from tkinter import ttk
 
 import i18n
-from ui_theme import BG_DARK, BG_PANEL, FG_PRIMARY, FONT_HEADING, apply_theme
+from ui_theme import apply_theme, get_theme_mode, style_listbox
 
 
 class LanguagePickerDialog(tk.Toplevel):
@@ -23,7 +23,7 @@ class LanguagePickerDialog(tk.Toplevel):
         self.result: str | None = initial or i18n.get_language()
         self._required = required
         self.title(title or i18n.t("language.title"))
-        self.configure(bg=BG_DARK)
+        apply_theme(self, get_theme_mode())
         self.resizable(True, True)
         self.minsize(520, 420)
         self.transient(master)
@@ -51,15 +51,12 @@ class LanguagePickerDialog(tk.Toplevel):
         self._list = tk.Listbox(
             list_frame,
             activestyle="none",
-            bg=BG_PANEL,
-            fg=FG_PRIMARY,
-            selectbackground="#d4af37",
-            selectforeground="#111111",
             highlightthickness=0,
             borderwidth=0,
             font=("Segoe UI", 10),
             yscrollcommand=scroll.set,
         )
+        style_listbox(self._list)
         scroll.config(command=self._list.yview)
         self._list.pack(side="left", fill="both", expand=True)
         scroll.pack(side="right", fill="y")
@@ -168,7 +165,7 @@ def ask_language(
 def pick_startup_language() -> str:
     """Blocking first-run language picker using a standalone window."""
     root = tk.Tk()
-    apply_theme(root)
+    apply_theme(root, "dark")
     i18n.set_language("en")
     root.withdraw()
     code = ask_language(root, required=True, initial="en")

@@ -24,11 +24,7 @@ def main() -> None:
 
     _run("make_icon.py")
 
-    fonts_dir = ROOT / "assets" / "fonts"
-    if not any(fonts_dir.glob("*.ttf")):
-        _run("setup_fonts.py")
-    else:
-        print("Fonts already present — skipping download.")
+    _run("setup_fonts.py")
 
     banners_dir = ROOT / "assets" / "banners"
     if not any(banners_dir.glob("*.png")):
