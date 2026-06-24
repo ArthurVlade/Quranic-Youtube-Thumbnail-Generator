@@ -464,6 +464,8 @@ class ThumbnailApp(tk.Tk):
         self.reciter_font_var = tk.StringVar()
         self._title_font_labels: dict[str, str] = {}
         self._reciter_font_labels: dict[str, str] = {}
+        self._banner_grid_chrome: list[dict] = []
+        self._container_grid_chrome: list[dict] = []
 
         self._syncing_offsets = False
 
@@ -1463,11 +1465,34 @@ class ThumbnailApp(tk.Tk):
         self._build_banner_grid()
         self._on_banner_selected()
 
+    def _refresh_picker_grid_theme(self) -> None:
+        """Update banner/container tile chrome without reloading images."""
+        p = palette()
+        current_banner = self.banner_var.get()
+        for item in self._banner_grid_chrome:
+            selected = item["key"] == current_banner
+            border = ACCENT if selected else p.grid_border
+            item["btn_frame"].configure(bg=border)
+            if item.get("image_btn"):
+                item["image_btn"].configure(bg=border)
+            item["caption"].configure(bg=BG_PANEL, fg=ACCENT if selected else p.grid_muted)
+
+        current_container = self.name_container_var.get()
+        for item in self._container_grid_chrome:
+            selected = item["key"] == current_container
+            border = ACCENT if selected else p.grid_border
+            item["btn_frame"].configure(bg=border)
+            if item.get("image_btn"):
+                item["image_btn"].configure(bg=border)
+            if item.get("caption"):
+                item["caption"].configure(bg=BG_PANEL, fg=ACCENT if selected else p.grid_muted)
+
     def _build_banner_grid(self) -> None:
         frame = self._banner_grid_frame
         for child in frame.winfo_children():
             child.destroy()
         self._banner_thumb_refs.clear()
+        self._banner_grid_chrome.clear()
 
         THUMB = 72
         cols = 4
@@ -1535,6 +1560,12 @@ class ThumbnailApp(tk.Tk):
                                   bg=BG_PANEL,
                                   fg=ACCENT if selected else p.grid_muted, wraplength=THUMB, justify="center")
             lbl_widget.pack()
+            self._banner_grid_chrome.append({
+                "key": label,
+                "btn_frame": btn_frame,
+                "image_btn": btn if photo else None,
+                "caption": lbl_widget,
+            })
 
     def _select_banner(self, label: str) -> None:
         self.banner_var.set(label)
@@ -1584,6 +1615,7 @@ class ThumbnailApp(tk.Tk):
         for child in frame.winfo_children():
             child.destroy()
         self._container_thumb_refs.clear()
+        self._container_grid_chrome.clear()
 
         TW, TH = 128, 40
         cols = 2
@@ -1625,14 +1657,23 @@ class ThumbnailApp(tk.Tk):
             border = ACCENT if selected else p.grid_border
             btn_frame = tk.Frame(cell, bg=border, bd=0)
             btn_frame.pack()
+            btn = None
             if photo:
                 self._container_thumb_refs.append(photo)
                 btn = tk.Label(btn_frame, image=photo, cursor="hand2", bd=0, bg=border, padx=2, pady=2)
                 btn.pack()
-            btn.bind("<Button-1>", lambda _e, lbl=label: self._select_name_container(lbl))
+            target = btn if btn is not None else btn_frame
+            target.bind("<Button-1>", lambda _e, lbl=label: self._select_name_container(lbl))
             short = label if len(label) <= 22 else label[:21] + "…"
-            tk.Label(cell, text=short, font=("Segoe UI", 7), bg=BG_PANEL,
-                     fg=ACCENT if selected else p.grid_muted, wraplength=TW + 20, justify="center").pack()
+            caption = tk.Label(cell, text=short, font=("Segoe UI", 7), bg=BG_PANEL,
+                               fg=ACCENT if selected else p.grid_muted, wraplength=TW + 20, justify="center")
+            caption.pack()
+            self._container_grid_chrome.append({
+                "key": label,
+                "btn_frame": btn_frame,
+                "image_btn": btn if photo else None,
+                "caption": caption,
+            })
 
     def _select_name_container(self, label: str) -> None:
         self.name_container_var.set(label)
@@ -2241,7 +2282,6 @@ class ThumbnailApp(tk.Tk):
         apply_theme(self, get_theme_mode())
         if hasattr(self, "_light_backdrop"):
             self._light_backdrop.refresh()
-            self.after(150, self._light_backdrop.refresh)
         if hasattr(self, "_left_card"):
             self._left_card.configure(bg=BORDER)
         if hasattr(self, "_preview_card"):
@@ -2258,10 +2298,8 @@ class ThumbnailApp(tk.Tk):
             self._bg_preview_label.configure(bg=BG_INPUT)
         if hasattr(self, "_theme_btn"):
             self._theme_btn.configure(text=self._theme_button_label())
-        if hasattr(self, "_banner_grid_frame") and self._banner_grid_frame.winfo_children():
-            self._build_banner_grid()
-        if hasattr(self, "_container_grid_frame") and self._container_grid_frame.winfo_children():
-            self._build_container_grid()
+        if self._banner_grid_chrome or self._container_grid_chrome:
+            self._refresh_picker_grid_theme()
 
     def _refresh_titlebar_theme(self) -> None:
         if not hasattr(self, "_titlebar"):

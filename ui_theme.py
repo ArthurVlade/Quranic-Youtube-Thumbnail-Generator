@@ -390,42 +390,58 @@ def _mix_rgb(c1: tuple[int, int, int], c2: tuple[int, int, int], amount: float) 
     return _lerp_rgb(c1, c2, max(0.0, min(1.0, amount)))
 
 
+def _gradient_row_color(t: float) -> tuple[int, int, int]:
+    g = LIGHT_GRADIENT
+    top, upper, mid, lower, bottom = g["top"], g["upper"], g["mid"], g["lower"], g["bottom"]
+    if t < 0.35:
+        return _lerp_rgb(top, upper, t / 0.35)
+    if t < 0.65:
+        return _lerp_rgb(upper, mid, (t - 0.35) / 0.30)
+    if t < 0.85:
+        return _lerp_rgb(mid, lower, (t - 0.65) / 0.20)
+    return _lerp_rgb(lower, bottom, (t - 0.85) / 0.15)
+
+
+_GRADIENT_CACHE: dict[tuple[int, int], object] = {}
+_GRADIENT_CACHE_MAX = 6
+
+
 def render_light_gradient(width: int, height: int):
-    """Soft vertical gradient — slate blue mist, clearly not flat white."""
+    """Band-rendered gradient with cache — fast enough for live theme/resize."""
     from PIL import Image, ImageDraw
 
     w = max(width, 2)
     h = max(height, 2)
-    g = LIGHT_GRADIENT
-    top, upper, mid, lower, bottom = g["top"], g["upper"], g["mid"], g["lower"], g["bottom"]
+    # Render at reduced height, scale up — gradient is smooth so this is fine
+    render_h = max(64, min(h, 256))
+    render_w = max(64, min(w, 512))
+    key = (render_w, render_h)
+    cached = _GRADIENT_CACHE.get(key)
+    if cached is None:
+        img = Image.new("RGB", (render_w, render_h))
+        draw = ImageDraw.Draw(img)
+        bands = 40
+        band_h = max(1, (render_h + bands - 1) // bands)
+        wash = LIGHT_GRADIENT["wash"]
+        for b in range(bands):
+            y0 = b * band_h
+            y1 = min(render_h, y0 + band_h)
+            if y0 >= render_h:
+                break
+            t = ((y0 + y1) / 2) / max(render_h - 1, 1)
+            row = _gradient_row_color(t)
+            draw.rectangle((0, y0, render_w, y1), fill=row)
+            if render_w > 80:
+                warm = _mix_rgb(row, wash, 0.10)
+                draw.rectangle((render_w * 3 // 5, y0, render_w, y1), fill=warm)
+        _GRADIENT_CACHE[key] = img
+        if len(_GRADIENT_CACHE) > _GRADIENT_CACHE_MAX:
+            _GRADIENT_CACHE.pop(next(iter(_GRADIENT_CACHE)))
+        cached = img
 
-    img = Image.new("RGB", (w, h))
-    draw = ImageDraw.Draw(img)
-    for y in range(h):
-        t = y / max(h - 1, 1)
-        if t < 0.35:
-            row = _lerp_rgb(top, upper, t / 0.35)
-        elif t < 0.65:
-            row = _lerp_rgb(upper, mid, (t - 0.35) / 0.30)
-        elif t < 0.85:
-            row = _lerp_rgb(mid, lower, (t - 0.65) / 0.20)
-        else:
-            row = _lerp_rgb(lower, bottom, (t - 0.85) / 0.15)
-        # Horizontal wash — left slightly cooler, right slightly warmer
-        x_bias = int(6 * (0.5 - 0.0))  # applied per-row via slight brighten on right half
-        draw.line([(0, y), (w, y)], fill=row)
-        if w > 80:
-            warm = _mix_rgb(row, g["wash"], 0.12)
-            draw.line([(w * 3 // 5, y), (w, y)], fill=warm)
-
-    vignette = Image.new("RGBA", (w, h), (0, 0, 0, 0))
-    vdraw = ImageDraw.Draw(vignette)
-    for y in range(h):
-        edge = y / max(h - 1, 1)
-        if edge > 0.68:
-            alpha = int((edge - 0.68) / 0.32 * 32)
-            vdraw.line([(0, y), (w, y)], fill=(40, 52, 72, alpha))
-    return Image.alpha_composite(img.convert("RGBA"), vignette).convert("RGB")
+    if cached.size == (w, h):
+        return cached.copy()
+    return cached.resize((w, h), Image.Resampling.BILINEAR)
 
 
 class LightGradientBackdrop:
@@ -436,10 +452,10 @@ class LightGradientBackdrop:
         self._canvas = tk.Canvas(root, highlightthickness=0, bd=0, borderwidth=0)
         self._photo = None
         self._job: str | None = None
+        self._paint_key: tuple[int, int, str] | None = None
         self.inner = tk.Frame(self._canvas, highlightthickness=0, bd=0)
         self._win = self._canvas.create_window(0, 0, window=self.inner, anchor="nw")
         self._canvas.bind("<Configure>", self._on_configure, add="+")
-        self.inner.bind("<Configure>", self._on_inner_configure, add="+")
 
     def _inset(self) -> int:
         return LIGHT_CONTENT_INSET if get_theme_mode() == "light" else 0
@@ -450,11 +466,12 @@ class LightGradientBackdrop:
         self.refresh()
 
     def _on_map(self, _event=None) -> None:
-        self._root.after(50, self.refresh)
+        self._root.after_idle(self._schedule_paint)
 
     def refresh(self) -> None:
         p = palette()
-        if get_theme_mode() == "light":
+        mode = get_theme_mode()
+        if mode == "light":
             mid = LIGHT_GRADIENT["mid"]
             self.inner.configure(bg="#%02x%02x%02x" % mid)
             self._canvas.configure(bg="#%02x%02x%02x" % LIGHT_GRADIENT["top"])
@@ -462,7 +479,8 @@ class LightGradientBackdrop:
             self.inner.configure(bg=p.bg_dark)
             self._canvas.configure(bg=p.bg_dark)
         self._sync_geometry()
-        self._paint()
+        self._paint_key = None
+        self._schedule_paint()
 
     def _sync_geometry(self) -> None:
         m = self._inset()
@@ -471,29 +489,32 @@ class LightGradientBackdrop:
         self._canvas.coords(self._win, m, m)
         self._canvas.itemconfigure(self._win, width=max(w - 2 * m, 1), height=max(h - 2 * m, 1))
 
-    def _on_inner_configure(self, event) -> None:
-        self._sync_geometry()
-        self._canvas.configure(scrollregion=self._canvas.bbox("all"))
-
     def _on_configure(self, _event=None) -> None:
+        self._sync_geometry()
+        self._schedule_paint()
+
+    def _schedule_paint(self) -> None:
         if self._job:
             self._root.after_cancel(self._job)
-        self._job = self._root.after(40, self._repaint)
+        self._job = self._root.after(120, self._repaint)
 
     def _repaint(self) -> None:
         self._job = None
-        self._sync_geometry()
         self._paint()
 
     def _paint(self) -> None:
         w = self._canvas.winfo_width()
         h = self._canvas.winfo_height()
         if w < 4 or h < 4:
-            self._root.after(80, self.refresh)
             return
+        mode = get_theme_mode()
+        key = (w, h, mode)
+        if key == self._paint_key and self._photo is not None:
+            return
+
         from PIL import Image, ImageTk
 
-        if get_theme_mode() == "light":
+        if mode == "light":
             img = render_light_gradient(w, h)
         else:
             p = palette()
@@ -501,10 +522,14 @@ class LightGradientBackdrop:
             from PIL import Image
             img = Image.new("RGB", (w, h), rgb)
         self._photo = ImageTk.PhotoImage(img)
-        self._canvas.delete("gradient")
-        self._canvas.create_image(0, 0, anchor="nw", image=self._photo, tags="gradient")
-        self._canvas.tag_lower("gradient")
-        self._canvas.tag_raise(self._win)
+        self._paint_key = key
+        if self._canvas.find_withtag("gradient"):
+            self._canvas.itemconfigure("gradient", image=self._photo)
+        else:
+            self._canvas.delete("gradient")
+            self._canvas.create_image(0, 0, anchor="nw", image=self._photo, tags="gradient")
+            self._canvas.tag_lower("gradient")
+            self._canvas.tag_raise(self._win)
 
 
 class SegmentedTabView(ttk.Frame):
@@ -575,19 +600,19 @@ class SegmentedTabView(ttk.Frame):
 
         self._scroll_canvases.append(canvas)
         self._tabs.append((key, btn, container, canvas, inner))
-        if idx == 0:
-            container.pack(fill="both", expand=True)
+        container.place(relx=0, rely=0, relwidth=1, relheight=1)
+        if idx > 0:
+            container.lower()
         return inner
 
     def select(self, index: int) -> None:
+        if index == self._active:
+            return
         self._active = index
-        for i, (_key, btn, container, _canvas, _inner) in enumerate(self._tabs):
-            if i == index:
-                container.pack(fill="both", expand=True)
-                style_segment_button(btn, active=True, compact=True)
-            else:
-                container.pack_forget()
-                style_segment_button(btn, active=False, compact=True)
+        _key, _btn, active, _canvas, _inner = self._tabs[index]
+        active.lift()
+        for i, (_key, btn, _container, _canvas, _inner) in enumerate(self._tabs):
+            style_segment_button(btn, active=(i == index), compact=True)
 
     def refresh_theme(self) -> None:
         p = palette()
