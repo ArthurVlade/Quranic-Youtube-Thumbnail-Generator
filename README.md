@@ -12,6 +12,14 @@ The app runs at **1280×720** in the preview and exports **HD, Full HD, or true 
 
 *Example 4K export. You can also export HD (1280×720) or Full HD (2560×1440) from the Export tab.*
 
+In-app screenshots:
+
+<img width="1331" height="818" alt="image" src="https://github.com/user-attachments/assets/9ac9f59b-d374-4145-aea9-7f943ccb3f4f" />
+
+
+<img width="1325" height="817" alt="image" src="https://github.com/user-attachments/assets/97e5da99-d555-4a1b-a939-c7a2bdb3ff47" />
+
+
 ---
 
 ## What this does for you
