@@ -5,38 +5,30 @@ from __future__ import annotations
 from pathlib import Path
 from urllib.request import urlretrieve
 
-# Variable-font builds from Google Fonts (static/ paths were removed upstream).
-FONTS = {
-    "Amiri-Bold.ttf": "https://raw.githubusercontent.com/google/fonts/main/ofl/amiri/Amiri-Bold.ttf",
-    "Cinzel-Variable.ttf": "https://raw.githubusercontent.com/google/fonts/main/ofl/cinzel/Cinzel%5Bwght%5D.ttf",
-    "CormorantGaramond-Variable.ttf": "https://raw.githubusercontent.com/google/fonts/main/ofl/cormorantgaramond/CormorantGaramond%5Bwght%5D.ttf",
-    "PlayfairDisplay-Variable.ttf": "https://raw.githubusercontent.com/google/fonts/main/ofl/playfairdisplay/PlayfairDisplay%5Bwght%5D.ttf",
-    "JosefinSans-Variable.ttf": "https://raw.githubusercontent.com/google/fonts/main/ofl/josefinsans/JosefinSans%5Bwght%5D.ttf",
-    "NotoSans-Variable.ttf": "https://raw.githubusercontent.com/google/fonts/main/ofl/notosans/NotoSans%5Bwdth,wght%5D.ttf",
-    "NotoSansSC-Variable.ttf": "https://raw.githubusercontent.com/google/fonts/main/ofl/notosanssc/NotoSansSC%5Bwght%5D.ttf",
-    "NotoSansJP-Variable.ttf": "https://raw.githubusercontent.com/google/fonts/main/ofl/notosansjp/NotoSansJP%5Bwght%5D.ttf",
-    "NotoSansKR-Variable.ttf": "https://raw.githubusercontent.com/google/fonts/main/ofl/notosanskr/NotoSansKR%5Bwght%5D.ttf",
-    "NotoSansDevanagari-Variable.ttf": "https://raw.githubusercontent.com/google/fonts/main/ofl/notosansdevanagari/NotoSansDevanagari%5Bwdth,wght%5D.ttf",
-    "NotoSansBengali-Variable.ttf": "https://raw.githubusercontent.com/google/fonts/main/ofl/notosansbengali/NotoSansBengali%5Bwdth,wght%5D.ttf",
-    "NotoNaskhArabic-Variable.ttf": "https://raw.githubusercontent.com/google/fonts/main/ofl/notonaskharabic/NotoNaskhArabic%5Bwght%5D.ttf",
-}
+from text_fonts import FONT_DOWNLOADS
 
 
 def main() -> None:
     fonts_dir = Path(__file__).resolve().parent / "assets" / "fonts"
     fonts_dir.mkdir(parents=True, exist_ok=True)
 
-    for name, url in FONTS.items():
+    ok = fail = 0
+    for name, url in FONT_DOWNLOADS.items():
         dest = fonts_dir / name
         if dest.exists() and dest.stat().st_size > 1000:
             print(f"Already present: {name}")
+            ok += 1
             continue
         print(f"Downloading {name}...")
         try:
             urlretrieve(url, dest)
             print(f"Saved {dest}")
+            ok += 1
         except Exception as exc:
             print(f"Could not download {name}: {exc}")
+            fail += 1
+
+    print(f"\nDone — {ok} fonts ready, {fail} failed.")
 
 
 if __name__ == "__main__":

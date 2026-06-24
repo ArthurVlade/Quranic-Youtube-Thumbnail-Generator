@@ -176,7 +176,13 @@ def shape_text(text: str) -> str:
     return display_text(t)
 
 
-def font_for_text(text: str, size: int, *, role: str = "title") -> ImageFont.FreeTypeFont | ImageFont.ImageFont:
+def font_for_text(
+    text: str,
+    size: int,
+    *,
+    role: str = "title",
+    font_id: str | None = None,
+) -> ImageFont.FreeTypeFont | ImageFont.ImageFont:
     """Return a font that can render the dominant script in *text*."""
     script = primary_script(text)
     weight = 400 if role == "title" else 300
@@ -231,7 +237,14 @@ def font_for_text(text: str, size: int, *, role: str = "title") -> ImageFont.Fre
             weight,
         )
 
-    # Latin default — keep the cinematic look when glyphs fit
+    # Latin / European — user-selected display font when available
+    if script in {"latin", "other"} and font_id:
+        from text_fonts import load_reciter_font, load_title_font
+
+        if role == "title":
+            return load_title_font(font_id, size)
+        return load_reciter_font(font_id, size)
+
     fonts_dir = _fonts_dir()
     if role == "title":
         if (fonts_dir / "Cinzel-Variable.ttf").exists():
@@ -247,9 +260,9 @@ def font_for_text(text: str, size: int, *, role: str = "title") -> ImageFont.Fre
     return _first_existing(["NotoSans-Variable", "NotoSans[wght]", "NotoSans-Regular", "Georgia", "segoeui"], size, weight)
 
 
-def font_factory_for_text(text: str, *, role: str = "title"):
+def font_factory_for_text(text: str, *, role: str = "title", font_id: str | None = None):
     def factory(size: int):
-        return font_for_text(text, size, role=role)
+        return font_for_text(text, size, role=role, font_id=font_id)
     return factory
 
 

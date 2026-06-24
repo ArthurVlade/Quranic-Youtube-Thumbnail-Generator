@@ -29,6 +29,12 @@ from thumbnail_generator import (
     save_thumbnail,
 )
 from name_containers import list_name_containers
+from text_fonts import (
+    RECITER_FONTS,
+    TITLE_FONTS,
+    reciter_font_label,
+    title_font_label,
+)
 from ui_theme import (
     ACCENT,
     BG_DARK,
@@ -441,6 +447,10 @@ class ThumbnailApp(tk.Tk):
         self.title_size_var = tk.IntVar(value=52)
         self.reciter_size_var = tk.IntVar(value=44)
         self.badge_size_var = tk.IntVar(value=28)
+        self.title_font_var = tk.StringVar()
+        self.reciter_font_var = tk.StringVar()
+        self._title_font_labels: dict[str, str] = {}
+        self._reciter_font_labels: dict[str, str] = {}
 
         self._syncing_offsets = False
 
@@ -647,6 +657,8 @@ class ThumbnailApp(tk.Tk):
             "title_size": int(self.title_size_var.get()),
             "reciter_size": int(self.reciter_size_var.get()),
             "badge_size": int(self.badge_size_var.get()),
+            "title_font": self._current_title_font_id(),
+            "reciter_font": self._current_reciter_font_id(),
             "arabic_color": self.arabic_color.color_var.get(),
             "english_color": self.english_color.color_var.get(),
             "reciter_color": self.reciter_color.color_var.get(),
@@ -676,6 +688,9 @@ class ThumbnailApp(tk.Tk):
             self.title_size_var.set(int(s.get("title_size", self.title_size_var.get())))
             self.reciter_size_var.set(int(s.get("reciter_size", self.reciter_size_var.get())))
             self.badge_size_var.set(int(s.get("badge_size", self.badge_size_var.get())))
+            if hasattr(self, "title_font_combo"):
+                self._set_title_font(s.get("title_font", "cinzel"))
+                self._set_reciter_font(s.get("reciter_font", "cormorant_garamond"))
             for picker, key in [
                 (self.arabic_color, "arabic_color"),
                 (self.english_color, "english_color"),
@@ -957,6 +972,9 @@ class ThumbnailApp(tk.Tk):
         i18n.bind_widget(glow, "color.soft_glow")
 
         ttk.Separator(parent, orient="horizontal").pack(fill="x", pady=(12, 8))
+        self._build_font_section(parent)
+
+        ttk.Separator(parent, orient="horizontal").pack(fill="x", pady=(12, 8))
 
         # ── Typography sizes ─────────────────────────────────────────────────
         typo_hdr = ttk.Label(parent, text=i18n.t("style.typography"), style="Panel.Heading.TLabel")
@@ -1066,6 +1084,102 @@ class ThumbnailApp(tk.Tk):
 
         self._banner_size_int.trace_add("write", _to_float)
         return self._banner_size_int
+
+    def _build_font_section(self, parent) -> None:
+        """Title + reciter font pickers — placed near the top of the Style tab."""
+        frame = ttk.LabelFrame(parent, text=i18n.t("style.fonts"), padding=8)
+        frame.pack(fill="x", pady=(0, 4))
+        i18n.bind_widget(frame, "style.fonts")
+        self._font_combo_row(
+            frame,
+            "style.title_font",
+            self.title_font_var,
+            TITLE_FONTS,
+            self._title_font_labels,
+            self._on_title_font_changed,
+        )
+        self._font_combo_row(
+            frame,
+            "style.reciter_font",
+            self.reciter_font_var,
+            RECITER_FONTS,
+            self._reciter_font_labels,
+            self._on_reciter_font_changed,
+        )
+        fonts_hint = ttk.Label(
+            frame,
+            text=i18n.t("style.fonts_hint"),
+            style="Panel.Muted.TLabel",
+            wraplength=340,
+        )
+        fonts_hint.pack(anchor="w", pady=(4, 0))
+        i18n.bind_widget(fonts_hint, "style.fonts_hint")
+
+    def _font_combo_row(
+        self,
+        parent,
+        label_key: str,
+        var: tk.StringVar,
+        choices: tuple,
+        lookup: dict[str, str],
+        on_change,
+    ) -> None:
+        row = ttk.Frame(parent, style="Panel.TFrame")
+        row.pack(fill="x", pady=(0, 8))
+        lbl = ttk.Label(row, text=i18n.t(label_key), style="Panel.TLabel", width=18)
+        lbl.pack(side="left", anchor="n")
+        i18n.bind_widget(lbl, label_key)
+        combo = ttk.Combobox(row, textvariable=var, state="readonly", width=36)
+        combo.pack(side="left", fill="x", expand=True, padx=(6, 0))
+        labels: list[str] = []
+        for choice in choices:
+            lookup[choice.label] = choice.id
+            labels.append(choice.label)
+        combo["values"] = labels
+        combo.bind("<<ComboboxSelected>>", on_change)
+        if label_key == "style.title_font":
+            self.title_font_combo = combo
+            if var.get() not in labels:
+                default = next((c.label for c in choices if c.id == "cinzel"), labels[0] if labels else "")
+                if default:
+                    var.set(default)
+        else:
+            self.reciter_font_combo = combo
+            if var.get() not in labels:
+                default = next(
+                    (c.label for c in choices if c.id == "cormorant_garamond"),
+                    labels[0] if labels else "",
+                )
+                if default:
+                    var.set(default)
+
+    def _current_title_font_id(self) -> str:
+        label = self.title_font_var.get()
+        return self._title_font_labels.get(label, "cinzel")
+
+    def _current_reciter_font_id(self) -> str:
+        label = self.reciter_font_var.get()
+        return self._reciter_font_labels.get(label, "cormorant_garamond")
+
+    def _set_title_font(self, font_id: str) -> None:
+        label = title_font_label(font_id)
+        if hasattr(self, "title_font_combo"):
+            values = list(self.title_font_combo["values"])
+            if label in values:
+                self.title_font_var.set(label)
+
+    def _set_reciter_font(self, font_id: str) -> None:
+        label = reciter_font_label(font_id)
+        if hasattr(self, "reciter_font_combo"):
+            values = list(self.reciter_font_combo["values"])
+            if label in values:
+                self.reciter_font_var.set(label)
+
+    def _on_title_font_changed(self, _event=None) -> None:
+        self.schedule_preview()
+
+    def _on_reciter_font_changed(self, _event=None) -> None:
+        self.schedule_preview()
 
     def _size_row(self, parent, label_key: str, var: tk.IntVar, lo: int, hi: int, step: int) -> None:
         row = ttk.Frame(parent, style="Panel.TFrame")
@@ -1955,6 +2069,8 @@ class ThumbnailApp(tk.Tk):
             title_size=int(self.title_size_var.get()),
             reciter_size=int(self.reciter_size_var.get()),
             badge_size=int(self.badge_size_var.get()),
+            title_font=self._current_title_font_id(),
+            reciter_font=self._current_reciter_font_id(),
             svg_offset_x=layout["svg_offset_x"],
             svg_offset_y=layout["svg_offset_y"],
             title_offset_x=layout["title_offset_x"],

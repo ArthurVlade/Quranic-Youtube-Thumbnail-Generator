@@ -55,6 +55,8 @@ class ThumbnailConfig:
     title_size: int = 52
     reciter_size: int = 44
     badge_size: int = 28
+    title_font: str = "cinzel"
+    reciter_font: str = "cormorant_garamond"
     # Per-element independent offsets (relative to their natural stack position)
     svg_offset_x: int = 0
     svg_offset_y: int = 0
@@ -469,7 +471,9 @@ def generate_thumbnail(
     title_font = title_h = None
     if english:
         title_font, tb = _fit_text(
-            draw, english, font_factory_for_text(config.english_surah, role="title"),
+            draw, english, font_factory_for_text(
+                config.english_surah, role="title", font_id=config.title_font,
+            ),
             max_text_width, config.title_size * s, 20 * s,
         )
         title_h = tb[3] - tb[1]
@@ -478,7 +482,9 @@ def generate_thumbnail(
     rec_font = rec_h = None
     if reciter:
         rec_font, rb = _fit_text(
-            draw, reciter, font_factory_for_text(config.reciter_name, role="subtitle"),
+            draw, reciter, font_factory_for_text(
+                config.reciter_name, role="subtitle", font_id=config.reciter_font,
+            ),
             max_text_width, config.reciter_size * s, 18 * s,
         )
         rec_h = rb[3] - rb[1]

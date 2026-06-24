@@ -44,6 +44,7 @@ a = Analysis(
         "surah_svg",
         "surah_native_names",
         "script_fonts",
+        "text_fonts",
         "thumbnail_generator",
     ],
     hookspath=[],

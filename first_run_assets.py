@@ -16,19 +16,7 @@ from image_quality import is_good_bytes
 # Minimum scenery count before we offer a background download
 MIN_BACKGROUNDS = 40
 
-# Fonts required for thumbnail text (same URLs as setup_fonts.py)
-FONTS: dict[str, str] = {
-    "Amiri-Bold.ttf": "https://raw.githubusercontent.com/google/fonts/main/ofl/amiri/Amiri-Bold.ttf",
-    "Cinzel-Variable.ttf": "https://raw.githubusercontent.com/google/fonts/main/ofl/cinzel/Cinzel%5Bwght%5D.ttf",
-    "CormorantGaramond-Variable.ttf": "https://raw.githubusercontent.com/google/fonts/main/ofl/cormorantgaramond/CormorantGaramond%5Bwght%5D.ttf",
-    "NotoSans-Variable.ttf": "https://raw.githubusercontent.com/google/fonts/main/ofl/notosans/NotoSans%5Bwdth,wght%5D.ttf",
-    "NotoSansSC-Variable.ttf": "https://raw.githubusercontent.com/google/fonts/main/ofl/notosanssc/NotoSansSC%5Bwght%5D.ttf",
-    "NotoSansJP-Variable.ttf": "https://raw.githubusercontent.com/google/fonts/main/ofl/notosansjp/NotoSansJP%5Bwght%5D.ttf",
-    "NotoSansKR-Variable.ttf": "https://raw.githubusercontent.com/google/fonts/main/ofl/notosanskr/NotoSansKR%5Bwght%5D.ttf",
-    "NotoSansDevanagari-Variable.ttf": "https://raw.githubusercontent.com/google/fonts/main/ofl/notosansdevanagari/NotoSansDevanagari%5Bwdth,wght%5D.ttf",
-    "NotoSansBengali-Variable.ttf": "https://raw.githubusercontent.com/google/fonts/main/ofl/notosansbengali/NotoSansBengali%5Bwdth,wght%5D.ttf",
-    "NotoNaskhArabic-Variable.ttf": "https://raw.githubusercontent.com/google/fonts/main/ofl/notonaskharabic/NotoNaskhArabic%5Bwght%5D.ttf",
-}
+from text_fonts import ESSENTIAL_FONT_FILES, FONT_DOWNLOADS
 
 # One clean 4K image per category for a fast starter library
 STARTER_SCENERY: list[tuple[str, int]] = [
@@ -68,7 +56,7 @@ def missing_fonts() -> list[str]:
     fonts_dir = _fonts_dir()
     fonts_dir.mkdir(parents=True, exist_ok=True)
     missing = []
-    for name in FONTS:
+    for name in ESSENTIAL_FONT_FILES:
         dest = fonts_dir / name
         if not dest.exists() or dest.stat().st_size < 1000:
             missing.append(name)
@@ -109,7 +97,7 @@ def download_assets(progress=None) -> tuple[int, int]:
     for i, name in enumerate(missing):
         if progress:
             progress(f"Downloading font {name} ({i + 1}/{len(missing)})…")
-        url = FONTS[name]
+        url = FONT_DOWNLOADS[name]
         if _download_url(url, fonts_dir / name):
             ok += 1
         else:
